@@ -1,0 +1,5 @@
+1. Get application logs
+
+kubectl logs \
+    --namespace {{ .Release.Namespace }} \
+    deployment/{{ include "imagepullsecret-patcher.fullname" . }}

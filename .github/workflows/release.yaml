@@ -1,0 +1,103 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  REPOSITORY: ghcr.io/${{ github.repository }}
+  CHART_DIR: deploy/helm
+  CHART_REPOSITORY: ghcr.io/${{ github.repository_owner }}/charts
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-go@v5
+
+      - uses: ko-build/setup-ko@v0.6
+
+      - uses: goreleaser/goreleaser-action@v5
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          KO_DOCKER_REPO: ${{ env.REPOSITORY }}
+        with:
+          version: latest
+          args: release
+
+  chart-release:
+    runs-on: ubuntu-latest
+    needs: [ goreleaser ]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Login to registry
+        run: |
+          echo '${{ secrets.GITHUB_TOKEN }}' | \
+            helm registry login \
+              -u '${{ github.actor }}' \
+              --password-stdin \
+              ghcr.io
+
+      - name: Install yq
+        env:
+          YQ_VERSION: "v4.35.2"
+        run: |
+          sudo wget https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64 -O /usr/bin/yq && \
+            sudo chmod +x /usr/bin/yq
+
+      - name: Update Chart
+        env:
+          VERSION: "${{ github.ref_name }}"
+          REPOSITORY: "${{ env.REPOSITORY }}"
+        run: |
+          yq -i '.version = strenv(VERSION)' '${{ env.CHART_DIR }}/Chart.yaml'
+          yq -i '.appVersion = strenv(VERSION)' '${{ env.CHART_DIR }}/Chart.yaml'
+
+      - name: Package chart
+        run: |
+          echo PACKAGE=$(helm package ${{ env.CHART_DIR }} -u | cut -d " " -f 8) >> ${GITHUB_ENV}
+
+      - name: Push chart
+        run: |
+          helm push \
+            ${{ env.PACKAGE }} \
+            oci://${{ env.CHART_REPOSITORY }}
+
+      - name: Template Chart
+        run: |
+          helm template \
+            ${GITHUB_REPOSITORY#*/} \
+            ${{ env.CHART_DIR }} > install.yaml
+
+      - name: Upload manifest to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: install.yaml
+          tag: ${{ github.ref }}

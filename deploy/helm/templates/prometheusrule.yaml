@@ -1,0 +1,14 @@
+{{- if and ( .Capabilities.APIVersions.Has "monitoring.coreos.com/v1" ) .Values.monitoring.podMonitor.enabled .Values.monitoring.prometheusRule.enabled }}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: {{ include "imagepullsecret-patcher.fullname" . }}
+  labels:
+    {{- include "imagepullsecret-patcher.labels" . | nindent 4 }}
+spec:
+  groups:
+  - name: {{ template "imagepullsecret-patcher.name" . }}
+    rules:
+      {{- toYaml .Values.monitoring.prometheusRule.spec | nindent 6 }}
+{{- end }}

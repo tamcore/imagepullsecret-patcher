@@ -1,0 +1,22 @@
+{{- if and ( .Capabilities.APIVersions.Has "monitoring.coreos.com/v1" ) (.Values.monitoring.enabled) (.Values.monitoring.podMonitor.enabled) -}}
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: {{ include "imagepullsecret-patcher.fullname" . }}
+  labels:
+    {{- include "imagepullsecret-patcher.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "imagepullsecret-patcher.selectorLabels" . | nindent 6 }}
+  podMetricsEndpoints:
+  - port: metrics
+    scheme: http
+    {{- with .Values.monitoring.podMonitor.interval }}
+    interval: {{ . }}
+    {{- end }}
+    {{- with .Values.monitoring.podMonitor.scrapeTimeout }}
+    scrapeTimeout: {{ . }}
+    {{- end }}
+{{- end }}
