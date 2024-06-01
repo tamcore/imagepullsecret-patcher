@@ -33,6 +33,8 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
 
       - uses: ko-build/setup-ko@v0.6
 
