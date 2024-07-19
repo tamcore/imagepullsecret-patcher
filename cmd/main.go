@@ -21,6 +21,7 @@ import (
 	"os"
 
 	"github.com/KimMachineGun/automemlimit/memlimit"
+	"go.uber.org/automaxprocs/maxprocs"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -50,6 +51,7 @@ func main() {
 	var enableLeaderElection bool
 	var probeAddr string
 	var secureMetrics bool
+	var noAutoMaxProcs bool
 	var noAutoMemlimit bool
 	var autoMemlimitRatio float64
 
@@ -74,6 +76,8 @@ func main() {
 			"Enabling this will ensure there is only one active controller manager.")
 	flag.BoolVar(&secureMetrics, "metrics-secure", false,
 		"If set the metrics endpoint is served securely")
+	flag.BoolVar(&noAutoMaxProcs, "no-auto-maxprocs", false,
+		"Do not automatically set GOMAXPROCS to match container or system cpu quota.")
 	flag.BoolVar(&noAutoMemlimit, "no-auto-memlimit", false,
 		"Do not automatically set GOMEMLIMIT to match container or system memory limit.")
 	flag.Float64Var(&autoMemlimitRatio, "auto-memlimit-ratio", float64(0.9),
@@ -95,6 +99,12 @@ func main() {
 	}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
+
+	if !noAutoMaxProcs {
+		if _, err := maxprocs.Set(maxprocs.Logger(setupLog.Info)); err != nil {
+			setupLog.Error(err, "failed to set GOMAXPROCS")
+		}
+	}
 
 	if !noAutoMemlimit {
 		if _, err := memlimit.SetGoMemLimitWithOpts(
