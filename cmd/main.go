@@ -20,6 +20,7 @@ import (
 	"flag"
 	"os"
 
+	"github.com/KimMachineGun/automemlimit/memlimit"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -49,6 +50,8 @@ func main() {
 	var enableLeaderElection bool
 	var probeAddr string
 	var secureMetrics bool
+	var noAutoMemlimit bool
+	var autoMemlimitRatio float64
 
 	// -serviceaccounts
 	var serviceAccounts string
@@ -62,25 +65,50 @@ func main() {
 	var secretNamespace string
 	// -excluded-namespaces
 	var excludedNamespaces string
-	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
-	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
+	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080",
+		"The address the metric endpoint binds to.")
+	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081",
+		"The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", true,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
 	flag.BoolVar(&secureMetrics, "metrics-secure", false,
 		"If set the metrics endpoint is served securely")
-
-	flag.StringVar(&serviceAccounts, "serviceaccounts", "", "comma-separated list of serviceaccounts to patch")
-	flag.StringVar(&dockerConfigJSON, "dockerconfigjson", "", "json credential for authenticating container registry")
-	flag.StringVar(&dockerConfigJSONPath, "dockerconfigjsonpath", "", "path for mounted json credentials")
-	flag.StringVar(&secretName, "secretname", "", "name of to be managed secret")
-	flag.StringVar(&secretNamespace, "secretnamespace", "", "namespace where original secret can be found")
-	flag.StringVar(&excludedNamespaces, "excluded-namespaces", "", "comma-separated namespaces excluded from processing")
+	flag.BoolVar(&noAutoMemlimit, "no-auto-memlimit", false,
+		"Do not automatically set GOMEMLIMIT to match container or system memory limit.")
+	flag.Float64Var(&autoMemlimitRatio, "auto-memlimit-ratio", float64(0.9),
+		"The ratio of reserved GOMEMLIMIT memory to the detected maximum container or system memory.")
+	flag.StringVar(&serviceAccounts, "serviceaccounts", "",
+		"comma-separated list of serviceaccounts to patch")
+	flag.StringVar(&dockerConfigJSON, "dockerconfigjson", "",
+		"json credential for authenticating container registry")
+	flag.StringVar(&dockerConfigJSONPath, "dockerconfigjsonpath", "",
+		"path for mounted json credentials")
+	flag.StringVar(&secretName, "secretname", "",
+		"name of to be managed secret")
+	flag.StringVar(&secretNamespace, "secretnamespace", "",
+		"namespace where original secret can be found")
+	flag.StringVar(&excludedNamespaces, "excluded-namespaces", "",
+		"comma-separated namespaces excluded from processing")
 	opts := zap.Options{
 		Development: true,
 	}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
+
+	if !noAutoMemlimit {
+		if _, err := memlimit.SetGoMemLimitWithOpts(
+			memlimit.WithRatio(autoMemlimitRatio),
+			memlimit.WithProvider(
+				memlimit.ApplyFallback(
+					memlimit.FromCgroup,
+					memlimit.FromSystem,
+				),
+			),
+		); err != nil {
+			setupLog.Error(err, "failed to set GOMEMLIMIT")
+		}
+	}
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
