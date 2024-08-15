@@ -10,10 +10,10 @@ require (
 	github.com/onsi/ginkgo/v2 v2.19.1
 	github.com/onsi/gomega v1.34.0
 	go.uber.org/automaxprocs v1.5.3
-	k8s.io/api v0.30.3
-	k8s.io/apimachinery v0.30.3
-	k8s.io/client-go v0.30.3
-	sigs.k8s.io/controller-runtime v0.18.4
+	k8s.io/api v0.30.4
+	k8s.io/apimachinery v0.30.4
+	k8s.io/client-go v0.30.4
+	sigs.k8s.io/controller-runtime v0.18.5
 )
 
 require (
