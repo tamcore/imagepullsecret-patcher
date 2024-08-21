@@ -25,8 +25,10 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	"github.com/tamcore/imagepullsecret-patcher/internal/config"
 	"github.com/tamcore/imagepullsecret-patcher/internal/utils"
@@ -45,16 +47,20 @@ func (r *SecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	log := log.FromContext(ctx)
 
 	log.Info("Reconciling imagePullSecret in " + req.Namespace)
-	if err := utils.ReconcileImagePullSecret(ctx, r.Client, r.Config, req.NamespacedName.Namespace); err != nil {
+	if err := utils.ReconcileImagePullSecret(ctx, r.Client, r.Config, req.NamespacedName.Name, req.NamespacedName.Namespace); err != nil {
 		return ctrl.Result{}, fmt.Errorf("Failed to reconcile imagePullSecret in Namespace '"+req.NamespacedName.Namespace+"': %v", err)
 	}
 
 	return ctrl.Result{}, nil
 }
 
+func secretToObject(secret *corev1.Secret) client.Object {
+	return secret
+}
+
 // SetupWithManager sets up the controller with the Manager.
 func (r *SecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
+	builder := ctrl.NewControllerManagedBy(mgr).
 		Named("SecretController").
 		For(&corev1.Secret{}).
 		WithEventFilter(predicate.Funcs{
@@ -70,6 +76,41 @@ func (r *SecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			DeleteFunc: func(e event.DeleteEvent) bool {
 				return utils.IsManagedSecret(r.Config, utils.FetchNamespace(r.Client, e.Object.GetNamespace()), e.Object)
 			},
-		}).
-		Complete(r)
+		})
+
+	// If DockerConfigJSONPath is defined
+	if r.Config.DockerConfigJSONPath != "" {
+		// Create a GenericEvent channel, to pass reconcile events to the controller
+		secretRconciliationSourceChannel := make(chan event.GenericEvent)
+
+		// Set up a goroutine, which does a basic polling watch on DockerConfigJSONPath
+		go func() {
+			ctx := context.TODO()
+			log.FromContext(ctx).Info("setting up watcher")
+
+			for {
+				// Wait, until DockerConfigJSONPath has changed
+				utils.WaitUntilFileChanges(r.Config.DockerConfigJSONPath)
+
+				// Fetch all Secrets
+				secretList := &corev1.SecretList{}
+				if err := r.Client.List(ctx, secretList); err != nil {
+					log.FromContext(ctx).Error(err, "error listing secrets")
+				}
+
+				for _, d := range secretList.Items {
+					// Filter for Secrets that are actually managed
+					if utils.IsManagedSecret(r.Config, utils.FetchNamespace(r.Client, d.GetNamespace()), secretToObject(&d)) {
+						// Send reconcile event for fetched Secret
+						secretRconciliationSourceChannel <- event.GenericEvent{Object: &d}
+					}
+				}
+			}
+		}()
+
+		// Attach channel event source to controller
+		builder = builder.WatchesRawSource(source.Channel(secretRconciliationSourceChannel, &handler.EnqueueRequestForObject{}))
+	}
+
+	return builder.Complete(r)
 }

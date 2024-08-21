@@ -60,7 +60,7 @@ func (r *ServiceAccountReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	// Ensure imagePullSecret exists before we attach it to the ServiceAccount
-	if err = utils.ReconcileImagePullSecret(ctx, r.Client, r.Config, serviceAccount.GetNamespace()); err != nil {
+	if err = utils.ReconcileImagePullSecret(ctx, r.Client, r.Config, r.Config.SecretName, serviceAccount.GetNamespace()); err != nil {
 		return ctrl.Result{}, fmt.Errorf("Failed to reconcile imagePullSecret in Namespace '"+serviceAccount.GetNamespace()+"': %v", err)
 	}
 

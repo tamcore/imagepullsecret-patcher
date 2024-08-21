@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
@@ -111,7 +112,7 @@ func FetchNamespace(client client.Client, namespaceName string) *corev1.Namespac
 	return namespace //, nil
 }
 
-func ReconcileImagePullSecret(ctx context.Context, k8sClient client.Client, c *config.Config, namespace string) error {
+func ReconcileImagePullSecret(ctx context.Context, k8sClient client.Client, c *config.Config, secretName string, namespace string) error {
 	desiredSecret, err := ConstructImagePullSecret(c, namespace)
 	if err != nil {
 		return fmt.Errorf("Failed to construct imagePullSecret: %v", err)
@@ -120,7 +121,7 @@ func ReconcileImagePullSecret(ctx context.Context, k8sClient client.Client, c *c
 	secret := &corev1.Secret{}
 	if err := k8sClient.Get(ctx,
 		types.NamespacedName{
-			Name:      c.SecretName,
+			Name:      secretName,
 			Namespace: namespace,
 		},
 		secret,
@@ -180,4 +181,19 @@ func GetDockerConfigJSON(c *config.Config) (string, error) {
 	}
 	b, ok := os.ReadFile(c.DockerConfigJSONPath)
 	return string(b), ok
+}
+
+func WaitUntilFileChanges(filename string) {
+	initialStat, _ := os.Stat(filename)
+	for {
+		time.Sleep(1 * time.Second)
+		stat, err := os.Stat(filename)
+		if err != nil {
+			fmt.Println("Error:", err)
+			continue
+		}
+		if stat.ModTime() != initialStat.ModTime() {
+			return
+		}
+	}
 }
