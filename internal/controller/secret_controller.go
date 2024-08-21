@@ -47,8 +47,17 @@ func (r *SecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	log := log.FromContext(ctx)
 
 	log.Info("Reconciling imagePullSecret in " + req.Namespace)
-	if err := utils.ReconcileImagePullSecret(ctx, r.Client, r.Config, req.NamespacedName.Name, req.NamespacedName.Namespace); err != nil {
+	doPatch := false
+	if didPatch, err := utils.ReconcileImagePullSecret(ctx, r.Client, r.Config, req.NamespacedName.Name, req.NamespacedName.Namespace); err != nil {
 		return ctrl.Result{}, fmt.Errorf("Failed to reconcile imagePullSecret in Namespace '"+req.NamespacedName.Namespace+"': %v", err)
+	} else {
+		doPatch = didPatch
+	}
+
+	if doPatch {
+		if err := utils.CleanupPodsForNamespace(ctx, r.Config, r.Client, req.NamespacedName.Namespace); err != nil {
+			return ctrl.Result{}, fmt.Errorf("Failed to cleanup Pods in unauthorized state: %w", err)
+		}
 	}
 
 	return ctrl.Result{}, nil
@@ -60,21 +69,23 @@ func secretToObject(secret *corev1.Secret) client.Object {
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *SecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	ctx := context.TODO()
+
 	builder := ctrl.NewControllerManagedBy(mgr).
 		Named("SecretController").
 		For(&corev1.Secret{}).
 		WithEventFilter(predicate.Funcs{
 			CreateFunc: func(e event.CreateEvent) bool {
-				return utils.IsManagedSecret(r.Config, utils.FetchNamespace(r.Client, e.Object.GetNamespace()), e.Object)
+				return utils.IsManagedSecret(r.Config, utils.FetchNamespace(ctx, r.Client, e.Object.GetNamespace()), e.Object)
 			},
 			UpdateFunc: func(e event.UpdateEvent) bool {
-				return utils.IsManagedSecret(r.Config, utils.FetchNamespace(r.Client, e.ObjectNew.GetNamespace()), e.ObjectNew)
+				return utils.IsManagedSecret(r.Config, utils.FetchNamespace(ctx, r.Client, e.ObjectNew.GetNamespace()), e.ObjectNew)
 			},
 			GenericFunc: func(e event.GenericEvent) bool {
-				return utils.IsManagedSecret(r.Config, utils.FetchNamespace(r.Client, e.Object.GetNamespace()), e.Object)
+				return utils.IsManagedSecret(r.Config, utils.FetchNamespace(ctx, r.Client, e.Object.GetNamespace()), e.Object)
 			},
 			DeleteFunc: func(e event.DeleteEvent) bool {
-				return utils.IsManagedSecret(r.Config, utils.FetchNamespace(r.Client, e.Object.GetNamespace()), e.Object)
+				return utils.IsManagedSecret(r.Config, utils.FetchNamespace(ctx, r.Client, e.Object.GetNamespace()), e.Object)
 			},
 		})
 
@@ -100,7 +111,7 @@ func (r *SecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 				for _, d := range secretList.Items {
 					// Filter for Secrets that are actually managed
-					if utils.IsManagedSecret(r.Config, utils.FetchNamespace(r.Client, d.GetNamespace()), secretToObject(&d)) {
+					if utils.IsManagedSecret(r.Config, utils.FetchNamespace(ctx, r.Client, d.GetNamespace()), secretToObject(&d)) {
 						// Send reconcile event for fetched Secret
 						secretRconciliationSourceChannel <- event.GenericEvent{Object: &d}
 					}

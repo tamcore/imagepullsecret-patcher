@@ -1,3 +1,10 @@
+# Image URL to use all building/pushing image targets
+IMG ?= imagepullsecret-patcher
+IMG_REGISTRY ?= ttl.sh
+IMG_TAG ?= dev
+
+INSTALLER_NAMESPACE ?= imagepullsecret-patcher
+
 # ENVTEST_K8S_VERSION refers to the version of kubebuilder assets to be downloaded by envtest binary.
 ENVTEST_K8S_VERSION = 1.31.0
 
@@ -77,6 +84,34 @@ build: manifests generate fmt vet ## Build manager binary.
 .PHONY: run
 run: manifests generate fmt vet ## Run a controller from your host.
 	go run ./cmd/main.go
+
+
+.PHONY: container-build-push
+container-build-push: fmt vet ## Build and push container image.
+	KO_DOCKER_REPO=${IMG_REGISTRY}/${IMG} ko build -t ${IMG_TAG} --bare --sbom=none cmd/main.go
+
+.PHONY: container-build-local
+container-build-local: fmt vet ## Build container image and load it into local container daemon.
+	KO_DOCKER_REPO=${IMG_REGISTRY}/${IMG} ko build -t ${IMG_TAG} --bare --sbom=none --local cmd/main.go
+
+.PHONY: build-installer
+build-installer: manifests generate helm ## Generate a consolidated YAML with CRDs and deployment.
+	mkdir -p dist
+	$(HELM) template deploy/helm $(shell test -e values-mine.yaml && echo "-f values-mine.yaml") --set image.registry=${IMG_REGISTRY},image.repository=${IMG},image.tag=${IMG_TAG} --name-template imagepullsecret-patcher --namespace ${INSTALLER_NAMESPACE} > dist/install.yaml
+
+##@ Deployment
+
+ifndef ignore-not-found
+  ignore-not-found = false
+endif
+
+.PHONY: deploy
+deploy: manifests build-installer helm ## Deploy controller to the K8s cluster specified in ~/.kube/config.
+	$(KUBECTL) --namespace ${INSTALLER_NAMESPACE} apply -f dist/install.yaml
+
+.PHONY: undeploy
+undeploy: helm ## Undeploy controller from the K8s cluster specified in ~/.kube/config. Call with ignore-not-found=true to ignore resource not found errors during deletion.
+	$(KUBECTL) --namespace ${INSTALLER_NAMESPACE} delete --ignore-not-found=$(ignore-not-found) -f dist/install.yaml
 
 ##@ Dependencies
 

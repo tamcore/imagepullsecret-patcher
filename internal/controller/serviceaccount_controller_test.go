@@ -74,6 +74,64 @@ var _ = Describe("ServiceAccount Controller", func() {
 			By("Creating the ServiceAccount to reconcile")
 			Expect(k8sClient.Create(ctx, serviceAccount.DeepCopy())).Should(Succeed())
 
+			By("Creating a managed Pod with ErrImagePull to cleanup")
+			managedPod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "managed-errimagepull",
+					Namespace: serviceAccount.GetNamespace(),
+				},
+				Spec: corev1.PodSpec{
+					ServiceAccountName: serviceAccount.GetName(),
+					Containers: []corev1.Container{
+						{
+							Name:  "test",
+							Image: "foo.bar",
+						},
+					},
+				},
+				Status: corev1.PodStatus{
+					ContainerStatuses: []corev1.ContainerStatus{
+						{
+							State: corev1.ContainerState{
+								Waiting: &corev1.ContainerStateWaiting{
+									Reason: "ErrImagePull",
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, managedPod)).Should(Succeed())
+
+			By("Creating a unmanaged Pod with ErrImagePull to cleanup")
+			unmanagedPod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "unmanaged-errimagepull",
+					Namespace: serviceAccount.GetNamespace(),
+				},
+				Spec: corev1.PodSpec{
+					ServiceAccountName: "entirely-unrelated-serviceaccount",
+					Containers: []corev1.Container{
+						{
+							Name:  "test",
+							Image: "foo.bar",
+						},
+					},
+				},
+				Status: corev1.PodStatus{
+					ContainerStatuses: []corev1.ContainerStatus{
+						{
+							State: corev1.ContainerState{
+								Waiting: &corev1.ContainerStateWaiting{
+									Reason: "ErrImagePull",
+								},
+							},
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, unmanagedPod)).Should(Succeed())
+
 			By("Reconciling the ServiceAccount")
 			serviceAccountReconciler := &ServiceAccountReconciler{
 				Client: k8sClient,
@@ -101,6 +159,22 @@ var _ = Describe("ServiceAccount Controller", func() {
 					err = fmt.Errorf("Expected %s, got %s", imagePullSecretData, secretData)
 				}
 			}
+			Expect(err).To(Not(HaveOccurred()))
+
+			By("Checking if managed Pod with ErrImagePull was cleaned up during the reconciliation")
+			foundManagedPod := &corev1.Pod{}
+			err = k8sClient.Get(ctx, types.NamespacedName{
+				Name:      managedPod.GetName(),
+				Namespace: managedPod.GetNamespace(),
+			}, foundManagedPod)
+			Expect(err).To(HaveOccurred())
+
+			By("Checking if unmanaged Pod with ErrImagePull was cleaned up during the reconciliation")
+			foundUnmanagedPod := &corev1.Pod{}
+			err = k8sClient.Get(ctx, types.NamespacedName{
+				Name:      unmanagedPod.GetName(),
+				Namespace: unmanagedPod.GetNamespace(),
+			}, foundUnmanagedPod)
 			Expect(err).To(Not(HaveOccurred()))
 		})
 

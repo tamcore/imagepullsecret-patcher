@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"reflect"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -55,46 +56,50 @@ func (r *ServiceAccountReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	// Not a managed SA
-	if !utils.IsServiceAccountManaged(r.Config, utils.FetchNamespace(r.Client, serviceAccount.GetNamespace()), serviceAccount) {
+	if !utils.IsServiceAccountManaged(r.Config, utils.FetchNamespace(ctx, r.Client, serviceAccount.GetNamespace()), serviceAccount) {
 		return ctrl.Result{}, nil
 	}
 
 	// Ensure imagePullSecret exists before we attach it to the ServiceAccount
-	if err = utils.ReconcileImagePullSecret(ctx, r.Client, r.Config, r.Config.SecretName, serviceAccount.GetNamespace()); err != nil {
+	if _, err = utils.ReconcileImagePullSecret(ctx, r.Client, r.Config, r.Config.SecretName, serviceAccount.GetNamespace()); err != nil {
 		return ctrl.Result{}, fmt.Errorf("Failed to reconcile imagePullSecret in Namespace '"+serviceAccount.GetNamespace()+"': %v", err)
 	}
 
-	if r.includeImagePullSecret(serviceAccount, r.Config.SecretName) {
-		log.Info("desired ImagePullSecret found in ServiceAccount")
-		return ctrl.Result{}, nil
-	}
-
 	patchFrom := client.MergeFrom(serviceAccount.DeepCopy())
-	patchedServiceAccount := r.getPatchedServiceAccount(serviceAccount, r.Config.SecretName)
+	patchedServiceAccount := r.getPatchedServiceAccount(serviceAccount.DeepCopy(), r.Config.SecretName)
 
-	err = r.Patch(ctx, patchedServiceAccount, patchFrom)
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("[%s] Failed to patch ImagePullSecret to ServiceAccount '"+serviceAccount.GetName()+"' in namespace '"+serviceAccount.GetNamespace()+"': %v", err)
+	if !reflect.DeepEqual(serviceAccount.ImagePullSecrets, patchedServiceAccount.ImagePullSecrets) {
+		err = r.Patch(ctx, patchedServiceAccount, patchFrom)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("[%s] Failed to patch ImagePullSecret to ServiceAccount '"+serviceAccount.GetName()+"' in namespace '"+serviceAccount.GetNamespace()+"': %v", err)
+		}
+		log.Info("Attached ImagePullSecret to ServiceAccount '" + serviceAccount.GetName() + "' in namespace '" + serviceAccount.GetNamespace() + "'")
+
+		// Run Pod cleanup only if we're freshly attaching the imagePullSecret to the ServiceAccount
+		if err = utils.CleanupPodsForSA(ctx, r.Client, serviceAccount.GetNamespace(), serviceAccount.GetName()); err != nil {
+			return ctrl.Result{}, fmt.Errorf("Failed to cleanup Pods in unauthorized state: %w", err)
+		}
+		log.Info("Cleaned up Pods belonging to ServiceAccount " + serviceAccount.GetName())
 	}
-	log.Info("Attached ImagePullSecret to ServiceAccount '" + serviceAccount.GetName() + "' in namespace '" + serviceAccount.GetNamespace() + "'")
 
 	return ctrl.Result{}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ServiceAccountReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	ctx := context.TODO()
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("ServiceAccountController").
 		For(&corev1.ServiceAccount{}).
 		WithEventFilter(predicate.Funcs{
 			CreateFunc: func(e event.CreateEvent) bool {
-				return utils.IsServiceAccountManaged(r.Config, utils.FetchNamespace(r.Client, e.Object.GetNamespace()), e.Object)
+				return utils.IsServiceAccountManaged(r.Config, utils.FetchNamespace(ctx, r.Client, e.Object.GetNamespace()), e.Object)
 			},
 			UpdateFunc: func(e event.UpdateEvent) bool {
-				return utils.IsServiceAccountManaged(r.Config, utils.FetchNamespace(r.Client, e.ObjectNew.GetNamespace()), e.ObjectNew)
+				return utils.IsServiceAccountManaged(r.Config, utils.FetchNamespace(ctx, r.Client, e.ObjectNew.GetNamespace()), e.ObjectNew)
 			},
 			GenericFunc: func(e event.GenericEvent) bool {
-				return utils.IsServiceAccountManaged(r.Config, utils.FetchNamespace(r.Client, e.Object.GetNamespace()), e.Object)
+				return utils.IsServiceAccountManaged(r.Config, utils.FetchNamespace(ctx, r.Client, e.Object.GetNamespace()), e.Object)
 			},
 			// Ignore Deletion events
 			DeleteFunc: func(e event.DeleteEvent) bool {

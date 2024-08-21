@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -29,6 +30,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	"github.com/tamcore/imagepullsecret-patcher/internal/config"
 )
@@ -92,30 +94,97 @@ func HasAnnotation(obj client.Object, annotationKey string, annotationValue stri
 	return false
 }
 
-func FetchNamespace(client client.Client, namespaceName string) *corev1.Namespace {
-	namespace := &corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
+func FetchNamespace(ctx context.Context, client client.Client, namespaceName string) *corev1.Namespace {
+	ns := &corev1.Namespace{}
+	_ = client.Get(ctx,
+		types.NamespacedName{
 			Name: namespaceName,
 		},
-	}
-	_ = client.Get(context.TODO(),
+		ns,
+	)
+	// error handling is overrated
+	// if err != nil {
+	//     return ns, err
+	// }
+	return ns //, nil
+}
+
+func FetchServiceAccount(ctx context.Context, client client.Client, namespace string, serviceAccount string) *corev1.ServiceAccount {
+	sa := &corev1.ServiceAccount{}
+	_ = client.Get(ctx,
 		types.NamespacedName{
-			Name:      namespaceName,
-			Namespace: namespaceName,
+			Name:      serviceAccount,
+			Namespace: namespace,
 		},
-		namespace,
+		sa,
 	)
 	// error handling is overrated
 	// if err != nil {
 	//     return namespace, err
 	// }
-	return namespace //, nil
+	return sa //, nil
 }
 
-func ReconcileImagePullSecret(ctx context.Context, k8sClient client.Client, c *config.Config, secretName string, namespace string) error {
+//+kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch;delete
+
+func CleanupPodsForNamespace(ctx context.Context, c *config.Config, k8sClient client.Client, namespace string) error {
+	podList := &corev1.PodList{}
+	if err := k8sClient.List(ctx, podList, client.InNamespace(namespace)); err != nil {
+		return fmt.Errorf("failed to fetch pods: %w", err)
+	}
+
+	for _, pod := range podList.Items {
+		ns := FetchNamespace(ctx, k8sClient, namespace)
+		sa := FetchServiceAccount(ctx, k8sClient, namespace, pod.Spec.ServiceAccountName)
+		if !IsServiceAccountManaged(c, ns, sa) {
+			continue
+		}
+
+		for _, containerStatus := range pod.Status.ContainerStatuses {
+			if containerStatus.State.Waiting != nil {
+				if containerStatus.State.Waiting.Reason == "ErrImagePull" || containerStatus.State.Waiting.Reason == "ImagePullBackOff" {
+					log.FromContext(ctx).Info("Deleting Pod " + pod.Name + " in " + pod.Namespace + " due to status " + containerStatus.State.Waiting.Reason)
+					if err := k8sClient.Delete(ctx, &pod); err != nil {
+						return fmt.Errorf("failed to delete Pod "+pod.Name+"in "+pod.Namespace+": %w", err)
+					}
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func CleanupPodsForSA(ctx context.Context, k8sClient client.Client, namespace string, serviceAccount string) error {
+	podList := &corev1.PodList{}
+	if err := k8sClient.List(ctx, podList, client.InNamespace(namespace)); err != nil {
+		return fmt.Errorf("failed to fetch pods: %w", err)
+	}
+
+	for _, pod := range podList.Items {
+		if pod.Spec.ServiceAccountName != serviceAccount {
+			continue
+		}
+
+		for _, containerStatus := range pod.Status.ContainerStatuses {
+			if containerStatus.State.Waiting != nil {
+				if containerStatus.State.Waiting.Reason == "ErrImagePull" || containerStatus.State.Waiting.Reason == "ImagePullBackOff" {
+					log.FromContext(ctx).Info("Deleting Pod " + pod.Name + " in " + pod.Namespace + " due to status " + containerStatus.State.Waiting.Reason)
+					if err := k8sClient.Delete(ctx, &pod); err != nil {
+						return fmt.Errorf("failed to delete Pod "+pod.Name+"in "+pod.Namespace+": %w", err)
+					}
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func ReconcileImagePullSecret(ctx context.Context, k8sClient client.Client, c *config.Config, secretName string, namespace string) (bool, error) {
 	desiredSecret, err := ConstructImagePullSecret(c, namespace)
 	if err != nil {
-		return fmt.Errorf("Failed to construct imagePullSecret: %v", err)
+		return false, fmt.Errorf("Failed to construct imagePullSecret: %v", err)
 	}
 
 	secret := &corev1.Secret{}
@@ -129,21 +198,31 @@ func ReconcileImagePullSecret(ctx context.Context, k8sClient client.Client, c *c
 		if apierrs.IsNotFound(err) {
 			// If Secret does not exist create it right away and return
 			if err := k8sClient.Create(ctx, desiredSecret); err != nil {
-				return fmt.Errorf("Failed to create Secret: %v", err)
+				return false, fmt.Errorf("Failed to create Secret: %v", err)
 			}
-			return nil
+			return true, nil
 		}
-		return fmt.Errorf("while fetching Secret: %v", err)
+		return false, fmt.Errorf("while fetching Secret: %v", err)
 	}
 
+	inClusterSecret := secret.DeepCopy()
 	patchFrom := client.MergeFrom(secret.DeepCopy())
 	secret.Annotations = desiredSecret.Annotations
 	secret.Data = desiredSecret.Data
 
-	if err = k8sClient.Patch(ctx, secret, patchFrom); err != nil {
-		return fmt.Errorf("error while patching Secret '"+desiredSecret.GetName()+"' in namespace '"+desiredSecret.GetNamespace()+"': %v", err)
+	doPatch := false
+	if !reflect.DeepEqual(inClusterSecret.Annotations, desiredSecret.Annotations) {
+		doPatch = true
 	}
-	return nil
+	if !reflect.DeepEqual(inClusterSecret.Data, desiredSecret.Data) {
+		doPatch = true
+	}
+	if doPatch {
+		if err = k8sClient.Patch(ctx, secret, patchFrom); err != nil {
+			return false, fmt.Errorf("error while patching Secret '"+desiredSecret.GetName()+"' in namespace '"+desiredSecret.GetNamespace()+"': %v", err)
+		}
+	}
+	return doPatch, nil
 }
 
 func ConstructImagePullSecret(c *config.Config, namespace string) (*corev1.Secret, error) {

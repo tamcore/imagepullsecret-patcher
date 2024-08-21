@@ -52,8 +52,8 @@ spec:
               {{- end }}
             {{- end }}
           {{- end }}
-          ports:
           {{- if .Values.monitoring.enabled }}
+          ports:
             - name: metrics
               protocol: TCP
               containerPort: 8080
