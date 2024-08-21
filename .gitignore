@@ -28,3 +28,7 @@ go.work
 *~
 
 .dockerconfigjson
+.envrc
+values-mine.yaml
+dist/
+*.mk
