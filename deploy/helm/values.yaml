@@ -108,3 +108,13 @@ nodeSelector: {}
 tolerations: []
 
 affinity: {}
+
+extraObjects: []
+# - apiVersion: v1
+#   kind: Secret
+#   metadata:
+#     name: global-imagepullsecret-source
+#   type: kubernetes.io/dockerconfigjson
+#   stringData:
+#     .dockerconfigjson: |
+#       {"auths":{"example.com":{"auth":"Cg=="}}}
