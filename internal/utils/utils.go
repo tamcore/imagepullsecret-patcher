@@ -46,12 +46,12 @@ func IsServiceAccountManaged(c *config.Config, namespace client.Object, serviceA
 	return false
 }
 
-func IsNamespaceExcluded(c *config.Config, obj client.Object) bool {
-	if IsStringInList(obj.GetName(), c.ExcludedNamespaces) {
+func IsNamespaceExcluded(c *config.Config, namespace client.Object) bool {
+	if IsStringInList(namespace.GetName(), c.ExcludedNamespaces) {
 		return true
 	}
 
-	return HasAnnotation(obj, c.ExcludeAnnotation, "true")
+	return HasAnnotation(namespace, c.ExcludeAnnotation, "true")
 }
 
 func IsStringInList(find string, list string) bool {
@@ -64,22 +64,22 @@ func IsStringInList(find string, list string) bool {
 	return false
 }
 
-func IsServiceAccountExcluded(c *config.Config, obj client.Object) bool {
-	return HasAnnotation(obj, c.ExcludeAnnotation, "true")
+func IsServiceAccountExcluded(c *config.Config, serviceAccount client.Object) bool {
+	return HasAnnotation(serviceAccount, c.ExcludeAnnotation, "true")
 }
 
-func IsManagedSecret(c *config.Config, namespace client.Object, obj client.Object) bool {
+func IsManagedSecret(c *config.Config, namespace client.Object, secret client.Object) bool {
 	if IsNamespaceExcluded(c, namespace) {
 		return false
 	}
 
 	// Check whether secret has set annotation of name "app.kubernetes.io/managed-by"
 	// set to value equal to "imagepullsecret-patcher"
-	if HasAnnotation(obj, config.AnnotationManagedBy, config.AnnotationAppName) {
+	if HasAnnotation(secret, config.AnnotationManagedBy, config.AnnotationAppName) {
 		return true
 	}
 
-	return obj.GetName() == c.SecretName && obj.GetNamespace() != c.SecretNamespace
+	return secret.GetName() == c.SecretName && secret.GetNamespace() != c.SecretNamespace
 }
 
 func HasAnnotation(obj client.Object, annotationKey string, annotationValue string) bool {
@@ -94,35 +94,33 @@ func HasAnnotation(obj client.Object, annotationKey string, annotationValue stri
 	return false
 }
 
-func FetchNamespace(ctx context.Context, client client.Client, namespaceName string) *corev1.Namespace {
+func FetchNamespace(ctx context.Context, client client.Client, namespaceName string) (*corev1.Namespace, error) {
 	ns := &corev1.Namespace{}
-	_ = client.Get(ctx,
+	err := client.Get(ctx,
 		types.NamespacedName{
 			Name: namespaceName,
 		},
 		ns,
 	)
-	// error handling is overrated
-	// if err != nil {
-	//     return ns, err
-	// }
-	return ns //, nil
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch namespace: %w", err)
+	}
+	return ns, nil
 }
 
-func FetchServiceAccount(ctx context.Context, client client.Client, namespace string, serviceAccount string) *corev1.ServiceAccount {
+func FetchServiceAccount(ctx context.Context, client client.Client, namespace string, serviceAccount string) (*corev1.ServiceAccount, error) {
 	sa := &corev1.ServiceAccount{}
-	_ = client.Get(ctx,
+	err := client.Get(ctx,
 		types.NamespacedName{
 			Name:      serviceAccount,
 			Namespace: namespace,
 		},
 		sa,
 	)
-	// error handling is overrated
-	// if err != nil {
-	//     return namespace, err
-	// }
-	return sa //, nil
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch serviceAccount: %w", err)
+	}
+	return sa, nil
 }
 
 //+kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch;delete
@@ -134,8 +132,14 @@ func CleanupPodsForNamespace(ctx context.Context, c *config.Config, k8sClient cl
 	}
 
 	for _, pod := range podList.Items {
-		ns := FetchNamespace(ctx, k8sClient, namespace)
-		sa := FetchServiceAccount(ctx, k8sClient, namespace, pod.Spec.ServiceAccountName)
+		ns, err := FetchNamespace(ctx, k8sClient, namespace)
+		if err != nil {
+			return fmt.Errorf("failed to fetch namespace: %w", err)
+		}
+		sa, err := FetchServiceAccount(ctx, k8sClient, namespace, pod.Spec.ServiceAccountName)
+		if err != nil {
+			return fmt.Errorf("failed to fetch serviceAccount: %w", err)
+		}
 		if !IsServiceAccountManaged(c, ns, sa) {
 			continue
 		}

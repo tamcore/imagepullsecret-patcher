@@ -56,13 +56,17 @@ func (r *ServiceAccountReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	// Not a managed SA
-	if !utils.IsServiceAccountManaged(r.Config, utils.FetchNamespace(ctx, r.Client, serviceAccount.GetNamespace()), serviceAccount) {
+	ns, err := utils.FetchNamespace(ctx, r.Client, serviceAccount.GetNamespace())
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("failed to fetch namespace: %w", err)
+	}
+	if !utils.IsServiceAccountManaged(r.Config, ns, serviceAccount) {
 		return ctrl.Result{}, nil
 	}
 
 	// Ensure imagePullSecret exists before we attach it to the ServiceAccount
 	if _, err = utils.ReconcileImagePullSecret(ctx, r.Client, r.Config, r.Config.SecretName, serviceAccount.GetNamespace()); err != nil {
-		return ctrl.Result{}, fmt.Errorf("Failed to reconcile imagePullSecret in Namespace '"+serviceAccount.GetNamespace()+"': %v", err)
+		return ctrl.Result{}, fmt.Errorf("Failed to reconcile imagePullSecret in Namespace '"+serviceAccount.GetNamespace()+"': %w", err)
 	}
 
 	patchFrom := client.MergeFrom(serviceAccount.DeepCopy())
@@ -71,7 +75,7 @@ func (r *ServiceAccountReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	if !reflect.DeepEqual(serviceAccount.ImagePullSecrets, patchedServiceAccount.ImagePullSecrets) {
 		err = r.Patch(ctx, patchedServiceAccount, patchFrom)
 		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("[%s] Failed to patch ImagePullSecret to ServiceAccount '"+serviceAccount.GetName()+"' in namespace '"+serviceAccount.GetNamespace()+"': %v", err)
+			return ctrl.Result{}, fmt.Errorf("[%s] Failed to patch ImagePullSecret to ServiceAccount '"+serviceAccount.GetName()+"' in namespace '"+serviceAccount.GetNamespace()+"': %w", err)
 		}
 		log.Info("Attached ImagePullSecret to ServiceAccount '" + serviceAccount.GetName() + "' in namespace '" + serviceAccount.GetNamespace() + "'")
 
@@ -95,13 +99,25 @@ func (r *ServiceAccountReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		For(&corev1.ServiceAccount{}).
 		WithEventFilter(predicate.Funcs{
 			CreateFunc: func(e event.CreateEvent) bool {
-				return utils.IsServiceAccountManaged(r.Config, utils.FetchNamespace(ctx, r.Client, e.Object.GetNamespace()), e.Object)
+				ns, err := utils.FetchNamespace(ctx, r.Client, e.Object.GetNamespace())
+				if err != nil {
+					return false
+				}
+				return utils.IsServiceAccountManaged(r.Config, ns, e.Object)
 			},
 			UpdateFunc: func(e event.UpdateEvent) bool {
-				return utils.IsServiceAccountManaged(r.Config, utils.FetchNamespace(ctx, r.Client, e.ObjectNew.GetNamespace()), e.ObjectNew)
+				ns, err := utils.FetchNamespace(ctx, r.Client, e.ObjectNew.GetNamespace())
+				if err != nil {
+					return false
+				}
+				return utils.IsServiceAccountManaged(r.Config, ns, e.ObjectNew)
 			},
 			GenericFunc: func(e event.GenericEvent) bool {
-				return utils.IsServiceAccountManaged(r.Config, utils.FetchNamespace(ctx, r.Client, e.Object.GetNamespace()), e.Object)
+				ns, err := utils.FetchNamespace(ctx, r.Client, e.Object.GetNamespace())
+				if err != nil {
+					return false
+				}
+				return utils.IsServiceAccountManaged(r.Config, ns, e.Object)
 			},
 			// Ignore Deletion events
 			DeleteFunc: func(e event.DeleteEvent) bool {
