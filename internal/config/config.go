@@ -29,41 +29,53 @@ const (
 )
 
 type Config struct {
-	DockerConfigJSON     string
-	DockerConfigJSONPath string
-	SecretName           string
-	SecretNamespace      string
-	ExcludedNamespaces   string
-	ExcludeAnnotation    string
-	ServiceAccounts      string
-	AnnotationManagedBy  string
-	AnnotationAppName    string
+	DockerConfigJSON                 string
+	DockerConfigJSONPath             string
+	SecretName                       string
+	SecretNamespace                  string
+	ExcludedNamespaces               string
+	ExcludeAnnotation                string
+	ServiceAccounts                  string
+	AnnotationManagedBy              string
+	AnnotationAppName                string
+	FeatureDeletePods                bool
+	FeatureWatchDockerConfigJSONPath bool
 }
 
 type ConfigOptions struct {
-	DockerConfigJSON     string
-	DockerConfigJSONPath string
-	SecretName           string
-	SecretNamespace      string
-	ExcludedNamespaces   string
-	ExcludeAnnotation    string
-	ServiceAccounts      string
+	DockerConfigJSON                 string
+	DockerConfigJSONPath             string
+	SecretName                       string
+	SecretNamespace                  string
+	ExcludedNamespaces               string
+	ExcludeAnnotation                string
+	ServiceAccounts                  string
+	FeatureDeletePods                bool
+	FeatureWatchDockerConfigJSONPath bool
 }
 
 func NewConfig(options ...ConfigOptions) *Config {
 	c := &Config{
-		DockerConfigJSON:     env.GetDefault("CONFIG_DOCKERCONFIGJSON", ""),
-		DockerConfigJSONPath: env.GetDefault("CONFIG_DOCKERCONFIGJSONPATH", ""),
-		SecretName:           env.GetDefault("CONFIG_SECRETNAME", "global-imagepullsecret"),
-		SecretNamespace:      env.GetDefault("CONFIG_SECRET_NAMESPACE", ""),
-		ExcludedNamespaces:   env.GetDefault("CONFIG_EXCLUDED_NAMESPACES", "kube-*"),
-		ExcludeAnnotation:    env.GetDefault("CONFIG_EXCLUDE_ANNOTATION", "pborn.eu/imagepullsecret-patcher-exclude"),
-		ServiceAccounts:      env.GetDefault("CONFIG_SERVICEACCOUNTS", "default"),
-		AnnotationManagedBy:  AnnotationManagedBy,
-		AnnotationAppName:    AnnotationAppName,
+		DockerConfigJSON:                 env.GetDefault("CONFIG_DOCKERCONFIGJSON", ""),
+		DockerConfigJSONPath:             env.GetDefault("CONFIG_DOCKERCONFIGJSONPATH", ""),
+		SecretName:                       env.GetDefault("CONFIG_SECRETNAME", "global-imagepullsecret"),
+		SecretNamespace:                  env.GetDefault("CONFIG_SECRET_NAMESPACE", ""),
+		ExcludedNamespaces:               env.GetDefault("CONFIG_EXCLUDED_NAMESPACES", "kube-*"),
+		ExcludeAnnotation:                env.GetDefault("CONFIG_EXCLUDE_ANNOTATION", "pborn.eu/imagepullsecret-patcher-exclude"),
+		ServiceAccounts:                  env.GetDefault("CONFIG_SERVICEACCOUNTS", "default"),
+		AnnotationManagedBy:              AnnotationManagedBy,
+		AnnotationAppName:                AnnotationAppName,
+		FeatureDeletePods:                env.GetBoolDefault("CONFIG_DELETE_PODS", false),
+		FeatureWatchDockerConfigJSONPath: env.GetBoolDefault("CONFIG_WATCH_DOCKERCONFIGJSONPATH", false),
 	}
 
 	for _, opt := range options {
+		if opt.FeatureDeletePods {
+			c.FeatureDeletePods = opt.FeatureDeletePods
+		}
+		if opt.FeatureWatchDockerConfigJSONPath {
+			c.FeatureWatchDockerConfigJSONPath = opt.FeatureWatchDockerConfigJSONPath
+		}
 		if opt.DockerConfigJSON != "" {
 			c.DockerConfigJSON = opt.DockerConfigJSON
 		}

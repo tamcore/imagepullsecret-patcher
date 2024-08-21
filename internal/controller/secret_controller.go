@@ -54,7 +54,7 @@ func (r *SecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		doPatch = didPatch
 	}
 
-	if doPatch {
+	if doPatch && r.Config.FeatureDeletePods {
 		if err := utils.CleanupPodsForNamespace(ctx, r.Config, r.Client, req.NamespacedName.Namespace); err != nil {
 			return ctrl.Result{}, fmt.Errorf("Failed to cleanup Pods in unauthorized state: %w", err)
 		}
@@ -90,7 +90,7 @@ func (r *SecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		})
 
 	// If DockerConfigJSONPath is defined
-	if r.Config.DockerConfigJSONPath != "" {
+	if r.Config.DockerConfigJSONPath != "" && r.Config.FeatureWatchDockerConfigJSONPath {
 		// Create a GenericEvent channel, to pass reconcile events to the controller
 		secretRconciliationSourceChannel := make(chan event.GenericEvent)
 

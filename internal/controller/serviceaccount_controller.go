@@ -75,11 +75,13 @@ func (r *ServiceAccountReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		}
 		log.Info("Attached ImagePullSecret to ServiceAccount '" + serviceAccount.GetName() + "' in namespace '" + serviceAccount.GetNamespace() + "'")
 
-		// Run Pod cleanup only if we're freshly attaching the imagePullSecret to the ServiceAccount
-		if err = utils.CleanupPodsForSA(ctx, r.Client, serviceAccount.GetNamespace(), serviceAccount.GetName()); err != nil {
-			return ctrl.Result{}, fmt.Errorf("Failed to cleanup Pods in unauthorized state: %w", err)
+		if r.Config.FeatureDeletePods {
+			// Run Pod cleanup only if we're freshly attaching the imagePullSecret to the ServiceAccount
+			if err = utils.CleanupPodsForSA(ctx, r.Client, serviceAccount.GetNamespace(), serviceAccount.GetName()); err != nil {
+				return ctrl.Result{}, fmt.Errorf("Failed to cleanup Pods in unauthorized state: %w", err)
+			}
+			log.Info("Cleaned up Pods belonging to ServiceAccount " + serviceAccount.GetName())
 		}
-		log.Info("Cleaned up Pods belonging to ServiceAccount " + serviceAccount.GetName())
 	}
 
 	return ctrl.Result{}, nil

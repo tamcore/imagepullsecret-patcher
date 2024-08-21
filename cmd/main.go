@@ -54,6 +54,8 @@ func main() {
 	var noAutoMaxProcs bool
 	var noAutoMemlimit bool
 	var autoMemlimitRatio float64
+	var featureDeletePods bool
+	var featureWatchDockerConfigJSONPath bool
 
 	// -serviceaccounts
 	var serviceAccounts string
@@ -67,6 +69,7 @@ func main() {
 	var secretNamespace string
 	// -excluded-namespaces
 	var excludedNamespaces string
+
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080",
 		"The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081",
@@ -80,6 +83,14 @@ func main() {
 		"Do not automatically set GOMAXPROCS to match container or system cpu quota.")
 	flag.BoolVar(&noAutoMemlimit, "no-auto-memlimit", false,
 		"Do not automatically set GOMEMLIMIT to match container or system memory limit.")
+
+	flag.BoolVar(&featureDeletePods, "deletepods", false,
+		"Auto delete Pods in ErrImagePull or ImagePullBackOff, "+
+			"after patching their ServiceAccount or the ImagePullSecret attached to it.")
+	flag.BoolVar(&featureWatchDockerConfigJSONPath, "watchdockerconfigjsonpath", false,
+		"Watch the file referenced in dockerConfigJSONPath for changes "+
+			"and trigger a reconciliation of all secrets if it's changed.")
+
 	flag.Float64Var(&autoMemlimitRatio, "auto-memlimit-ratio", float64(0.9),
 		"The ratio of reserved GOMEMLIMIT memory to the detected maximum container or system memory.")
 	flag.StringVar(&serviceAccounts, "serviceaccounts", "",
@@ -138,7 +149,10 @@ func main() {
 		os.Exit(1)
 	}
 
-	configOptions := config.ConfigOptions{}
+	configOptions := config.ConfigOptions{
+		FeatureDeletePods:                featureDeletePods,
+		FeatureWatchDockerConfigJSONPath: featureWatchDockerConfigJSONPath,
+	}
 	if dockerConfigJSON != "" {
 		configOptions.DockerConfigJSON = dockerConfigJSON
 	}

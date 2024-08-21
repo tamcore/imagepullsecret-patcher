@@ -31,8 +31,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-const imagePullSecretData = `{"auth":{"example.com":{"username":"_json_key","password":"{}"}}}`
-
 // controller-runtime envtest doesn't support namespace deletion (https://github.com/kubernetes-sigs/controller-runtime/issues/880)
 // To work around that, we just create a new namespace + sa for each test
 func makeObjects(namespaceName string, serviceAccountName string, secretName string) (corev1.Namespace, corev1.ServiceAccount, types.NamespacedName, types.NamespacedName) {
@@ -63,7 +61,13 @@ var _ = Describe("ServiceAccount Controller", func() {
 	Context("When reconciling a ServiceAccount", func() {
 		var err error
 		ctx := context.Background()
-		config := config.NewConfig(config.ConfigOptions{DockerConfigJSON: imagePullSecretData, SecretNamespace: "kube-system"})
+		config := config.NewConfig(
+			config.ConfigOptions{
+				DockerConfigJSON:  imagePullSecretData,
+				SecretNamespace:   "kube-system",
+				FeatureDeletePods: true,
+			},
+		)
 
 		It("should successfully reconcile the resource", func() {
 			namespace, serviceAccount, serviceAccountNN, secretNN := makeObjects("testns-1", "default", config.SecretName)

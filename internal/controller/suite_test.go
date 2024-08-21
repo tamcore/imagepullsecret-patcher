@@ -39,6 +39,8 @@ import (
 
 var k8sClient ctrlclient.Client
 
+const imagePullSecretData = `{"auth":{"example.com":{"username":"_json_key","password":"{}"}}}`
+
 func TestControllers(t *testing.T) {
 	RegisterFailHandler(Fail)
 
