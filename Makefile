@@ -129,7 +129,7 @@ GOLANGCI_LINT = $(LOCALBIN)/golangci-lint-$(GOLANGCI_LINT_VERSION)
 
 ## Tool Versions
 # renovate: datasource=github-releases depName=helm/helm
-HELM_VERSION ?= v3.15.2
+HELM_VERSION ?= v3.15.4
 # renovate: datasource=github-releases depName=kubernetes-sigs/controller-tools
 CONTROLLER_TOOLS_VERSION ?= v0.16.5
 ENVTEST_VERSION ?= release-0.19
