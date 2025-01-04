@@ -134,7 +134,7 @@ HELM_VERSION ?= v3.15.2
 CONTROLLER_TOOLS_VERSION ?= v0.16.5
 ENVTEST_VERSION ?= release-0.19
 # renovate: datasource=github-releases depName=golangci/golangci-lint
-GOLANGCI_LINT_VERSION ?= v1.60.3
+GOLANGCI_LINT_VERSION ?= v1.63.4
 
 .PHONY: helm
 helm: $(HELM) ## Download helm locally if necessary.
