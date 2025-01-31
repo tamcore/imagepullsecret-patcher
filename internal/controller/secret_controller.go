@@ -63,10 +63,6 @@ func (r *SecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	return ctrl.Result{}, nil
 }
 
-func secretToObject(secret *corev1.Secret) client.Object {
-	return secret
-}
-
 // SetupWithManager sets up the controller with the Manager.
 func (r *SecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	ctx := context.TODO()
@@ -136,7 +132,7 @@ func (r *SecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
 						continue
 					}
 					// Filter for Secrets that are actually managed
-					if utils.IsManagedSecret(r.Config, ns, secretToObject(&d)) {
+					if utils.IsManagedSecret(r.Config, ns, &d) {
 						// Send reconcile event for fetched Secret
 						secretRconciliationSourceChannel <- event.GenericEvent{Object: &d}
 					}
