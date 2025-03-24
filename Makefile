@@ -60,9 +60,41 @@ test: manifests generate fmt vet lint setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test -v $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
 # Utilize Kind or modify the e2e tests to load the image locally, enabling compatibility with other vendors.
-.PHONY: test-e2e  # Run the e2e tests against a Kind k8s instance that is spun up.
-test-e2e:
-	go test ./test/e2e/ -v -ginkgo.v
+KO_DOCKER_REPO    ?= ko.local/imagepullsecret-patcher
+KIND_CLUSTER_NAME ?= kind-imagepullsecret-patcher
+KIND_KUBECONFIG   ?= ${PWD}/.kubeconfig
+
+.PHONY: e2e-kind
+e2e-kind: kind
+	$(KIND) get clusters | grep -q $(KIND_CLUSTER_NAME) || $(KIND) create cluster --name ${KIND_CLUSTER_NAME} --kubeconfig="${KIND_KUBECONFIG}" --image=kindest/node:v$(ENVTEST_K8S_VERSION) --config tests/e2e/kind.yaml
+
+.PHONY: e2e-kind-destroy
+e2e-kind-destroy:
+	$(KIND) delete cluster --name ${KIND_CLUSTER_NAME}
+
+.PHONY: e2e-local-gh-actions
+e2e-local-gh-actions: e2e-kind e2e-gh-actions ## Run e2e tests in local Kind using chainsaw.
+
+.PHONY: e2e-gh-actions
+e2e-gh-actions: ko-build-kind ko-kind-install e2e ## Run e2e tests in Github Actions' Kind using chainsaw.
+
+.PHONY: e2e
+e2e: chainsaw ## Run e2e tests using chainsaw.
+	$(CHAINSAW) test --test-dir ./tests/e2e/$(TESTS)
+
+.PHONY: ko-build-local
+ko-build-local: ko ## Build Docker image with KO
+	KO_DOCKER_REPO=$(KO_DOCKER_REPO) $(KO) build --sbom=none --bare --platform linux/amd64 ./cmd/
+
+.PHONY: ko-build-kind
+ko-build-kind: kind ko-build-local ## Build and Load Docker image into kind cluster
+	$(KIND) load docker-image $(KO_DOCKER_REPO) --name $(KIND_CLUSTER_NAME)
+
+.PHONY: ko-kind-install
+ko-kind-install: helm ko # Install Chart with built and loaded image into kind cluster
+	$(KUBECTL) create namespace $(INSTALLER_NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply --server-side --force-conflicts -f -
+	$(HELM) template --namespace $(INSTALLER_NAMESPACE) imagepullsecret-patcher ./deploy/helm --set image.registry="",image.repository=$(KO_DOCKER_REPO),image.tag=latest,image.pullPolicy=Never,podAnnotations.foo=x$(shell date +%s),strategy.type=Recreate,env.CONFIG_DOCKERCONFIGJSON='\{"auths":{"example.com":{"auth":"Cg=="}}}' | $(KUBECTL) apply --server-side --force-conflicts -f -
+	$(KUBECTL) --namespace $(INSTALLER_NAMESPACE) rollout status deployment/imagepullsecret-patcher --timeout=60s
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter & yamllint
@@ -94,7 +126,8 @@ container-build-local: fmt vet ## Build container image and load it into local c
 .PHONY: build-installer
 build-installer: manifests generate helm ## Generate a consolidated YAML with CRDs and deployment.
 	mkdir -p dist
-	$(HELM) template deploy/helm $(shell test -e values-mine.yaml && echo "-f values-mine.yaml") --set image.registry=${IMG_REGISTRY},image.repository=${IMG},image.tag=${IMG_TAG} --name-template imagepullsecret-patcher --namespace ${INSTALLER_NAMESPACE} > dist/install.yaml
+	echo -e "---\napiVersion: v1\nkind: Namespace\nmetadata:\n  name: ${INSTALLER_NAMESPACE}" > dist/install.yaml
+	$(HELM) template deploy/helm $(shell test -e values-mine.yaml && echo "-f values-mine.yaml") --set image.registry=${IMG_REGISTRY},image.repository=${IMG},image.tag=${IMG_TAG} --name-template imagepullsecret-patcher --namespace ${INSTALLER_NAMESPACE} >> dist/install.yaml
 
 ##@ Deployment
 
@@ -123,6 +156,9 @@ HELM ?= $(LOCALBIN)/helm-$(HELM_VERSION)
 CONTROLLER_GEN ?= $(LOCALBIN)/controller-gen-$(CONTROLLER_TOOLS_VERSION)
 ENVTEST ?= $(LOCALBIN)/setup-envtest-$(ENVTEST_VERSION)
 GOLANGCI_LINT = $(LOCALBIN)/golangci-lint-$(GOLANGCI_LINT_VERSION)
+KIND = $(LOCALBIN)/kind-$(KIND_VERSION)
+CHAINSAW = $(LOCALBIN)/chainsaw-$(CHAINSAW_VERSION)
+KO = $(LOCALBIN)/ko-$(KO_VERSION)
 
 ## Tool Versions
 # renovate: datasource=github-releases depName=helm/helm
@@ -137,6 +173,15 @@ ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -
 
 # renovate: datasource=github-releases depName=golangci/golangci-lint
 GOLANGCI_LINT_VERSION ?= v1.64.8
+
+# renovate: datasource=github-releases depName=kubernetes-sigs/kind
+KIND_VERSION ?= v0.27.0
+
+# renovate: datasource=github-releases depName=kyverno/chainsaw
+CHAINSAW_VERSION ?= v0.2.12
+
+# renovate: datasource=github-releases depName=ko-build/ko
+KO_VERSION ?= v0.17.1
 
 .PHONY: helm
 helm: $(HELM) ## Download helm locally if necessary.
@@ -166,6 +211,20 @@ golangci-lint: $(GOLANGCI_LINT) ## Download golangci-lint locally if necessary.
 $(GOLANGCI_LINT): $(LOCALBIN)
 	$(call go-install-tool,$(GOLANGCI_LINT),github.com/golangci/golangci-lint/cmd/golangci-lint,${GOLANGCI_LINT_VERSION})
 
+.PHONY: kind
+kind: $(KIND) ## Download KIND locally if necessary.
+$(KIND): $(LOCALBIN)
+	$(call go-install-tool,$(KIND),sigs.k8s.io/kind,$(KIND_VERSION))
+
+.PHONY: chainsaw
+chainsaw: $(CHAINSAW) ## Download CHAINSAW locally if necessary.
+$(CHAINSAW): $(LOCALBIN)
+	$(call go-install-tool,$(CHAINSAW),github.com/kyverno/chainsaw,$(CHAINSAW_VERSION))
+
+.PHONY: chainsaw
+ko: $(KO) ## Download KO locally if necessary.
+$(KO): $(LOCALBIN)
+	$(call go-install-tool,$(KO),github.com/google/ko,$(KO_VERSION))
 
 # go-install-tool will 'go install' any package with custom target and name of binary, if it doesn't exist
 # $1 - target path with name of binary (ideally with version)

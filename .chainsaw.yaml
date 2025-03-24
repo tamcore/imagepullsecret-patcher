@@ -1,0 +1,17 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/configuration-chainsaw-v1alpha1.json
+apiVersion: chainsaw.kyverno.io/v1alpha2
+kind: Configuration
+metadata:
+  name: configuration
+spec:
+  error:
+    catch:
+      - podLogs:
+          namespace: imagepullsecret-patcher
+          tail: 100
+  timeouts:
+    assert: 0m10s
+    cleanup: 3m0s
+    delete: 2m0s
+    error: 2m0s
+    exec: 2m0s

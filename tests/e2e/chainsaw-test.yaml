@@ -1,0 +1,76 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/kyverno/chainsaw/main/.schemas/json/test-chainsaw-v1alpha1.json
+apiVersion: chainsaw.kyverno.io/v1alpha1
+kind: Test
+metadata:
+  name: chainsaw
+spec:
+  concurrent: false
+  steps:
+    - name: Deploy test resources
+      try:
+        - apply:
+            file: ./testdata-resources.yaml
+
+    - name: "Check if imagePullSecrets are present and attached to the ServiceAccount (managed-namespace)"
+      try:
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Secret
+              metadata:
+                name: global-imagepullsecret
+                namespace: managed-namespace
+        
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: ServiceAccount
+              metadata:
+                name: default
+                namespace: managed-namespace
+              imagePullSecrets:
+              - name: global-imagepullsecret
+
+    - name: "Check if imagePullSecrets are absent and not attached to the ServiceAccount (unmanaged-namespace)"
+      try:
+        # TODO: Make this work. Should verify, that the global-imagepullsecret in unmanaged-namespace DOES NOT exist
+        # - assert:
+        #     resource:
+        #       apiVersion: v1
+        #       kind: Secret
+        #       metadata:
+        #         # name: global-imagepullsecret
+        #         namespace: unmanaged-namespace
+        #       (name == global-imagepullsecret): false
+
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: ServiceAccount
+              metadata:
+                name: default
+                namespace: unmanaged-namespace
+              (imagePullSecrets == null): true
+
+    # - name: "Check if imagePullSecrets are absent and not attached to the ServiceAccount (kube-unmanaged)"
+    #   try:
+    #     # - assert:
+    #     #     resource:
+    #     #       apiVersion: v1
+    #     #       kind: Secret
+    #     #       metadata:
+    #     #         name: global-imagepullsecret
+    #     #         namespace: kube-unmanaged
+        
+    #     - assert:
+    #         resource:
+    #           apiVersion: v1
+    #           kind: ServiceAccount
+    #           metadata:
+    #             name: default
+    #             namespace: kube-unmanaged
+    #           imagePullSecrets: null
+    #         expect:
+    #         - check:
+    #             ($error != null): true
+    

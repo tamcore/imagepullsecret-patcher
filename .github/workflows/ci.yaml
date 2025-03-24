@@ -1,0 +1,165 @@
+# This workflow will build a golang project
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
+
+name: CI
+
+on:
+  push:
+    branches: [ "master" ]
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+  pull_request:
+    branches: [ "master" ]
+    paths:
+      - '**.go'
+      - 'go.mod'
+      - 'go.sum'
+  workflow_dispatch:
+
+jobs:
+  tooling-cache:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: 'go.mod'
+
+    - name: Cache tooling
+      uses: actions/cache@v4
+      with:
+        path: bin
+        key: ${{ runner.os }}-${{ hashFiles('Makefile') }}
+
+    - run: make helm controller-gen envtest golangci-lint  kind chainsaw ko
+
+  helm-lint:
+    needs: [tooling-cache]
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Cache tooling
+      uses: actions/cache@v4
+      with:
+        path: bin
+        key: ${{ runner.os }}-${{ hashFiles('Makefile') }}
+
+    - name: Install Helm
+      uses: azure/setup-helm@v4
+
+    - run: helm lint deploy/helm
+
+  lint-verify:
+    needs: [tooling-cache]
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: 'go.mod'
+
+    - name: Cache tooling
+      uses: actions/cache@v4
+      with:
+        path: bin
+        key: ${{ runner.os }}-${{ hashFiles('Makefile') }}
+
+    - name: fmt
+      run: make fmt
+
+    - name: vet
+      run: make vet
+
+    - name: lint
+      run: make lint
+
+  test:
+    needs: [tooling-cache]
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Cache tooling
+      uses: actions/cache@v4
+      with:
+        path: bin
+        key: ${{ runner.os }}-${{ hashFiles('Makefile') }}
+
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: 'go.mod'
+
+    - name: Test
+      run: make test
+
+  e2e:
+    needs:
+      - tooling-cache
+    #   - helm-lint
+    #   - lint-verify
+    #   - test
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        k8s_version:
+          - v1.31.0
+          - v1.30.0
+          - v1.29.0
+
+    steps:
+    - uses: azure/setup-kubectl@v4
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Cache tooling
+      uses: actions/cache@v4
+      with:
+        path: bin
+        key: ${{ runner.os }}-${{ hashFiles('Makefile') }}
+
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: 'go.mod'
+
+    - name: Create kind cluster
+      uses: helm/kind-action@v1
+      with:
+        node_image: "kindest/node:${{ matrix.k8s_version }}"
+        cluster_name: kind-cluster-${{ matrix.k8s_version }}
+        config: tests/e2e/kind.yaml
+
+    - name: Install imagepullsecret-patcher into kind cluster
+      run: make ko-build-kind ko-kind-install KIND_CLUSTER_NAME=kind-cluster-${{ matrix.k8s_version }}
+
+    - name: Run chainsaw e2e tests
+      run: make e2e
+
+    - name: fetch logs
+      if: failure()
+      run: |
+        mkdir -p /tmp/logs
+        kind export logs --name kind-cluster-${{ matrix.k8s_version }} /tmp/logs
+
+    - uses: actions/upload-artifact@v4
+      if: failure()
+      with:
+        name: kind_v${{ matrix.k8s_version }}
+        path: /tmp/logs
