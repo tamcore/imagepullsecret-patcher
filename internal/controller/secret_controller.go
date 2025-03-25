@@ -111,8 +111,7 @@ func (r *SecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		secretRconciliationSourceChannel := make(chan event.GenericEvent)
 
 		// Set up a goroutine, which does a basic polling watch on DockerConfigJSONPath
-		go func() {
-			ctx := context.TODO()
+		go func(ctx context.Context) {
 			log.FromContext(ctx).Info("setting up watcher")
 
 			for {
@@ -138,7 +137,7 @@ func (r *SecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
 					}
 				}
 			}
-		}()
+		}(ctx)
 
 		// Attach channel event source to controller
 		builder = builder.WatchesRawSource(source.Channel(secretRconciliationSourceChannel, &handler.EnqueueRequestForObject{}))
