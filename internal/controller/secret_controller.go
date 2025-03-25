@@ -48,15 +48,15 @@ func (r *SecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 	log.Info("Reconciling imagePullSecret in " + req.Namespace)
 	doPatch := false
-	if didPatch, err := utils.ReconcileImagePullSecret(ctx, r.Client, r.Config, req.NamespacedName.Name, req.NamespacedName.Namespace); err != nil {
-		return ctrl.Result{}, fmt.Errorf("Failed to reconcile imagePullSecret in Namespace '"+req.NamespacedName.Namespace+"': %w", err)
+	if didPatch, err := utils.ReconcileImagePullSecret(ctx, r.Client, r.Config, req.Name, req.Namespace); err != nil {
+		return ctrl.Result{}, fmt.Errorf("Failed to reconcile imagePullSecret in Namespace '"+req.Namespace+"': %w", err)
 	} else {
 		doPatch = didPatch
 	}
 
 	if doPatch && r.Config.FeatureDeletePods {
-		if err := utils.CleanupPodsForNamespace(ctx, r.Config, r.Client, req.NamespacedName.Namespace); err != nil {
-			return ctrl.Result{}, fmt.Errorf("Failed to cleanup Pods in unauthorized state: %w", err)
+		if err := utils.CleanupPodsForNamespace(ctx, r.Config, r.Client, req.Namespace); err != nil {
+			return ctrl.Result{}, fmt.Errorf("failed to cleanup Pods in unauthorized state: %w", err)
 		}
 	}
 
@@ -97,7 +97,7 @@ func (r *SecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				if err != nil {
 					return false
 				}
-				if !ns.ObjectMeta.DeletionTimestamp.IsZero() {
+				if !ns.DeletionTimestamp.IsZero() {
 					return false
 				}
 
@@ -121,7 +121,7 @@ func (r *SecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
 
 				// Fetch all Secrets
 				secretList := &corev1.SecretList{}
-				if err := r.Client.List(ctx, secretList); err != nil {
+				if err := r.List(ctx, secretList); err != nil {
 					log.FromContext(ctx).Error(err, "error listing secrets")
 				}
 

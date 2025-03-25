@@ -188,7 +188,7 @@ func CleanupPodsForSA(ctx context.Context, k8sClient client.Client, namespace st
 func ReconcileImagePullSecret(ctx context.Context, k8sClient client.Client, c *config.Config, secretName string, namespace string) (bool, error) {
 	desiredSecret, err := ConstructImagePullSecret(c, namespace)
 	if err != nil {
-		return false, fmt.Errorf("Failed to construct imagePullSecret: %v", err)
+		return false, fmt.Errorf("failed to construct imagePullSecret: %v", err)
 	}
 
 	secret := &corev1.Secret{}
@@ -202,7 +202,7 @@ func ReconcileImagePullSecret(ctx context.Context, k8sClient client.Client, c *c
 		if apierrs.IsNotFound(err) {
 			// If Secret does not exist create it right away and return
 			if err := k8sClient.Create(ctx, desiredSecret); err != nil {
-				return false, fmt.Errorf("Failed to create Secret: %v", err)
+				return false, fmt.Errorf("failed to create Secret: %v", err)
 			}
 			return true, nil
 		}
@@ -214,10 +214,8 @@ func ReconcileImagePullSecret(ctx context.Context, k8sClient client.Client, c *c
 	secret.Annotations = desiredSecret.Annotations
 	secret.Data = desiredSecret.Data
 
-	doPatch := false
-	if !reflect.DeepEqual(inClusterSecret.Annotations, desiredSecret.Annotations) {
-		doPatch = true
-	}
+	doPatch := !reflect.DeepEqual(inClusterSecret.Annotations, desiredSecret.Annotations)
+
 	if !reflect.DeepEqual(inClusterSecret.Data, desiredSecret.Data) {
 		doPatch = true
 	}
@@ -232,7 +230,7 @@ func ReconcileImagePullSecret(ctx context.Context, k8sClient client.Client, c *c
 func ConstructImagePullSecret(c *config.Config, namespace string) (*corev1.Secret, error) {
 	dockerConfigJSON, err := GetDockerConfigJSON(c)
 	if err != nil {
-		return nil, fmt.Errorf("Error while reading dockerConfigJSON from filesystem: %v", err)
+		return nil, fmt.Errorf("error while reading dockerConfigJSON from filesystem: %v", err)
 	}
 
 	secret := &corev1.Secret{
@@ -254,10 +252,10 @@ func ConstructImagePullSecret(c *config.Config, namespace string) (*corev1.Secre
 
 func GetDockerConfigJSON(c *config.Config) (string, error) {
 	if c.DockerConfigJSON == "" && c.DockerConfigJSONPath == "" {
-		return "", fmt.Errorf("Neither `CONFIG_DOCKERCONFIGJSON or `CONFIG_DOCKERCONFIGJSONPATH defined.")
+		return "", fmt.Errorf("neither `CONFIG_DOCKERCONFIGJSON or `CONFIG_DOCKERCONFIGJSONPATH defined")
 	}
 	if c.DockerConfigJSON != "" && c.DockerConfigJSONPath != "" {
-		return "", fmt.Errorf("Cannot specify both `CONFIG_DOCKERCONFIGJSON` and `CONFIG_DOCKERCONFIGJSONPATH`")
+		return "", fmt.Errorf("cannot specify both `CONFIG_DOCKERCONFIGJSON` and `CONFIG_DOCKERCONFIGJSONPATH`")
 	}
 	if c.DockerConfigJSON != "" {
 		return c.DockerConfigJSON, nil
