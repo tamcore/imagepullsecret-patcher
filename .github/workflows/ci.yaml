@@ -111,9 +111,9 @@ jobs:
       fail-fast: false
       matrix:
         k8s_version:
+          - v1.32.0
           - v1.31.0
           - v1.30.0
-          - v1.29.0
 
     steps:
     - uses: azure/setup-kubectl@3e0aec4d80787158d308d7b364cb1b702e7feb7f # v4
