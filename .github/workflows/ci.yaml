@@ -98,10 +98,25 @@ jobs:
     - name: Test
       run: make test
 
+  get-k8s-versions:
+    runs-on: ubuntu-latest
+
+    outputs:
+      versions: ${{ steps.get-k8s-versions.outputs.kind_versions }}
+
+    steps:
+      - name: Get latest Kubernetes versions
+        id: get-k8s-versions
+        uses: tamcore/charts/.github/actions/latest-k8s-versions@master
+        with:
+          count: 3
+          kind_images: true
+
   e2e:
     needs:
       - tooling-cache
-    #   - helm-lint
+      - get-k8s-versions
+      - helm-lint
     #   - lint-verify
     #   - test
 
@@ -110,10 +125,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        k8s_version:
-          - v1.32.0
-          - v1.31.0
-          - v1.30.0
+        k8s_version: ${{ fromJson(needs.get-k8s-versions.outputs.versions) }}
 
     steps:
     - uses: azure/setup-kubectl@3e0aec4d80787158d308d7b364cb1b702e7feb7f # v4
