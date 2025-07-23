@@ -1,6 +1,6 @@
 # imagepullsecret-patcher
 
-[![Build Status](https://img.shields.io/github/actions/workflow/status/tamcore/imagepullsecret-patcher/go.yml?branch=master&label=ci&logo=github&style=flat-square)](https://github.com/tamcore/imagepullsecret-patcher/actions?workflow=Go)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/tamcore/imagepullsecret-patcher/ci.yaml?branch=master&label=ci&logo=github&style=flat-square)](https://github.com/tamcore/imagepullsecret-patcher/actions?workflow=Go)
 [![Go Report Card](https://goreportcard.com/badge/github.com/tamcore/imagepullsecret-patcher)](https://goreportcard.com/report/github.com/tamcore/imagepullsecret-patcher)
 ![Codecov](https://img.shields.io/codecov/c/github/tamcore/imagepullsecret-patcher)
 ![GitHub tag (latest SemVer)](https://img.shields.io/github/v/tag/tamcore/imagepullsecret-patcher)
