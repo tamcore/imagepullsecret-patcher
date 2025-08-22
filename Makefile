@@ -178,7 +178,7 @@ GOLANGCI_LINT_VERSION ?= v2.4.0
 KIND_VERSION ?= v0.29.0
 
 # renovate: datasource=github-releases depName=kyverno/chainsaw
-CHAINSAW_VERSION ?= v0.2.12
+CHAINSAW_VERSION ?= v0.2.13
 
 # renovate: datasource=github-releases depName=ko-build/ko
 KO_VERSION ?= v0.18.0
