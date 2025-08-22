@@ -5,7 +5,7 @@ go 1.25.0
 require (
 	github.com/KimMachineGun/automemlimit v0.7.4
 	github.com/caitlinelfring/go-env-default v1.1.0
-	github.com/onsi/ginkgo/v2 v2.24.0
+	github.com/onsi/ginkgo/v2 v2.25.1
 	github.com/onsi/gomega v1.38.0
 	go.uber.org/automaxprocs v1.6.0
 	k8s.io/api v0.33.4
