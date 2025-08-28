@@ -164,7 +164,7 @@ KO = $(LOCALBIN)/ko-$(KO_VERSION)
 # renovate: datasource=github-releases depName=helm/helm
 HELM_VERSION ?= v3.18.6
 # renovate: datasource=github-releases depName=kubernetes-sigs/controller-tools
-CONTROLLER_TOOLS_VERSION ?= v0.18.0
+CONTROLLER_TOOLS_VERSION ?= v0.19.0
 
 #ENVTEST_VERSION is the version of controller-runtime release branch to fetch the envtest setup script (i.e. release-0.20)
 ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller-runtime | awk -F'[v.]' '{printf "release-%d.%d", $$2, $$3}')
