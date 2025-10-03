@@ -123,7 +123,11 @@ func Test_IsServiceAccountManaged(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			config := config.NewConfig(config.Config{DockerConfigJSON: "xx", SecretNamespace: "kube-system", ServiceAccounts: tt.configServiceAccounts})
+			config := config.NewConfig(
+				config.WithDockerConfigJSON("xx"),
+				config.WithSecretNamespace("kube-system"),
+				config.WithServiceAccounts(tt.configServiceAccounts),
+			)
 			// config.ServiceAccounts = tt.configServiceAccounts
 
 			if got := IsServiceAccountManaged(config, tt.args.namespace, tt.args.serviceAccount); got != tt.want {
@@ -134,7 +138,10 @@ func Test_IsServiceAccountManaged(t *testing.T) {
 }
 
 func Test_IsManagedSecret(t *testing.T) {
-	config := config.NewConfig(config.Config{DockerConfigJSON: "xx", SecretNamespace: "kube-system"})
+	config := config.NewConfig(
+		config.WithDockerConfigJSON("xx"),
+		config.WithSecretNamespace("kube-system"),
+	)
 	type args struct {
 		namespace client.Object
 		secret    client.Object
