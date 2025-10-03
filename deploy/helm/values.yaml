@@ -102,6 +102,8 @@ env:
   CONFIG_SECRETNAME: "global-imagepullsecret"
   # custom annotation to look for, when excluding namespaces
   # CONFIG_EXCLUDE_ANNOTATION: "example.com/imagepullsecret-patcher-exclude"
+  # number of concurrent reconciles. default is 1
+  # CONFIG_MAX_CONCURRENT_RECONCILES: "1"
 
 nodeSelector: {}
 

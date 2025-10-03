@@ -56,6 +56,7 @@ func main() {
 	var autoMemlimitRatio float64
 	var featureDeletePods bool
 	var featureWatchDockerConfigJSONPath bool
+	var maxConcurrentReconciles int
 
 	// -serviceaccounts
 	var serviceAccounts string
@@ -105,6 +106,9 @@ func main() {
 		"namespace where original secret can be found")
 	flag.StringVar(&excludedNamespaces, "excluded-namespaces", "",
 		"comma-separated namespaces excluded from processing")
+	// maxConcurrentReconciles sets the maximum number of concurrent Reconciles which can be run. Defaults to 1.
+	flag.IntVar(&maxConcurrentReconciles, "max-concurrent-reconciles", 1,
+		"the maximum number of concurrent Reconciles which can be run")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -149,29 +153,38 @@ func main() {
 		os.Exit(1)
 	}
 
-	configOptions := config.ConfigOptions{
-		FeatureDeletePods:                featureDeletePods,
-		FeatureWatchDockerConfigJSONPath: featureWatchDockerConfigJSONPath,
+	// Construct the functional option slice
+	var configOpts []config.ConfigOption
+	if featureDeletePods {
+		configOpts = append(configOpts, config.WithFeatureDeletePods(featureDeletePods))
+	}
+	if featureWatchDockerConfigJSONPath {
+		configOpts = append(configOpts, config.WithFeatureWatchDockerConfigJSONPath(featureWatchDockerConfigJSONPath))
 	}
 	if dockerConfigJSON != "" {
-		configOptions.DockerConfigJSON = dockerConfigJSON
+		configOpts = append(configOpts, config.WithDockerConfigJSON(dockerConfigJSON))
 	}
 	if dockerConfigJSONPath != "" {
-		configOptions.DockerConfigJSONPath = dockerConfigJSONPath
+		configOpts = append(configOpts, config.WithDockerConfigJSONPath(dockerConfigJSONPath))
 	}
 	if secretName != "" {
-		configOptions.SecretName = secretName
+		configOpts = append(configOpts, config.WithSecretName(secretName))
 	}
 	if secretNamespace != "" {
-		configOptions.SecretNamespace = secretNamespace
+		configOpts = append(configOpts, config.WithSecretNamespace(secretNamespace))
 	}
 	if excludedNamespaces != "" {
-		configOptions.ExcludedNamespaces = excludedNamespaces
+		configOpts = append(configOpts, config.WithExcludedNamespaces(excludedNamespaces))
 	}
 	if serviceAccounts != "" {
-		configOptions.ServiceAccounts = serviceAccounts
+		configOpts = append(configOpts, config.WithServiceAccounts(serviceAccounts))
 	}
-	controllerConfig := config.NewConfig(configOptions)
+	if maxConcurrentReconciles != 1 {
+		configOpts = append(configOpts, config.WithMaxConcurrentReconciles(maxConcurrentReconciles))
+	}
+
+	// Now pass all functional options to NewConfig
+	controllerConfig := config.NewConfig(configOpts...)
 
 	if err = (&controller.ServiceAccountReconciler{
 		Client: mgr.GetClient(),
@@ -181,6 +194,7 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "ServiceAccount")
 		os.Exit(1)
 	}
+
 	if err = (&controller.SecretReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),

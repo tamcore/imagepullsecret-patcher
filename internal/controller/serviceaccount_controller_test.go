@@ -62,11 +62,9 @@ var _ = Describe("ServiceAccount Controller", func() {
 		var err error
 		ctx := context.Background()
 		config := config.NewConfig(
-			config.ConfigOptions{
-				DockerConfigJSON:  imagePullSecretData,
-				SecretNamespace:   "kube-system",
-				FeatureDeletePods: true,
-			},
+			config.WithDockerConfigJSON(imagePullSecretData),
+			config.WithSecretNamespace("kube-system"),
+			config.WithFeatureDeletePods(true),
 		)
 
 		It("should successfully reconcile the resource", func() {
