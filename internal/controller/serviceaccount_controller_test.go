@@ -62,7 +62,7 @@ var _ = Describe("ServiceAccount Controller", func() {
 		var err error
 		ctx := context.Background()
 		config := config.NewConfig(
-			config.ConfigOptions{
+			config.Config{
 				DockerConfigJSON:  imagePullSecretData,
 				SecretNamespace:   "kube-system",
 				FeatureDeletePods: true,

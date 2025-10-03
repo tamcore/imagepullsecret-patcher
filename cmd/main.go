@@ -56,6 +56,7 @@ func main() {
 	var autoMemlimitRatio float64
 	var featureDeletePods bool
 	var featureWatchDockerConfigJSONPath bool
+	var maxConcurrentReconciles int
 
 	// -serviceaccounts
 	var serviceAccounts string
@@ -105,6 +106,9 @@ func main() {
 		"namespace where original secret can be found")
 	flag.StringVar(&excludedNamespaces, "excluded-namespaces", "",
 		"comma-separated namespaces excluded from processing")
+	// maxConcurrentReconciles sets the maximum number of concurrent Reconciles which can be run. Defaults to 1.
+	flag.IntVar(&maxConcurrentReconciles, "max-concurrent-reconciles", 1,
+		"the maximum number of concurrent Reconciles which can be run")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -149,7 +153,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	configOptions := config.ConfigOptions{
+	configOptions := config.Config{
 		FeatureDeletePods:                featureDeletePods,
 		FeatureWatchDockerConfigJSONPath: featureWatchDockerConfigJSONPath,
 	}

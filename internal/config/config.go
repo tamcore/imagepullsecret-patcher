@@ -36,25 +36,14 @@ type Config struct {
 	ExcludedNamespaces               string
 	ExcludeAnnotation                string
 	ServiceAccounts                  string
+	FeatureDeletePods                bool
+	FeatureWatchDockerConfigJSONPath bool
+	MaxConcurrentReconciles          int
 	AnnotationManagedBy              string
 	AnnotationAppName                string
-	FeatureDeletePods                bool
-	FeatureWatchDockerConfigJSONPath bool
 }
 
-type ConfigOptions struct {
-	DockerConfigJSON                 string
-	DockerConfigJSONPath             string
-	SecretName                       string
-	SecretNamespace                  string
-	ExcludedNamespaces               string
-	ExcludeAnnotation                string
-	ServiceAccounts                  string
-	FeatureDeletePods                bool
-	FeatureWatchDockerConfigJSONPath bool
-}
-
-func NewConfig(options ...ConfigOptions) *Config {
+func NewConfig(options ...Config) *Config {
 	c := &Config{
 		DockerConfigJSON:                 env.GetDefault("CONFIG_DOCKERCONFIGJSON", ""),
 		DockerConfigJSONPath:             env.GetDefault("CONFIG_DOCKERCONFIGJSONPATH", ""),
@@ -67,6 +56,7 @@ func NewConfig(options ...ConfigOptions) *Config {
 		AnnotationAppName:                AnnotationAppName,
 		FeatureDeletePods:                env.GetBoolDefault("CONFIG_DELETE_PODS", false),
 		FeatureWatchDockerConfigJSONPath: env.GetBoolDefault("CONFIG_WATCH_DOCKERCONFIGJSONPATH", false),
+		MaxConcurrentReconciles:          env.GetIntDefault("CONFIG_MAX_CONCURRENT_RECONCILES", 1),
 	}
 
 	for _, opt := range options {
@@ -96,6 +86,9 @@ func NewConfig(options ...ConfigOptions) *Config {
 		}
 		if opt.ServiceAccounts != "" {
 			c.ServiceAccounts = opt.ServiceAccounts
+		}
+		if opt.MaxConcurrentReconciles != 0 {
+			c.MaxConcurrentReconciles = opt.MaxConcurrentReconciles
 		}
 	}
 
