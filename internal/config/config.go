@@ -19,7 +19,7 @@ package config
 import (
 	"fmt"
 
-	"github.com/caitlinelfring/go-env-default"
+	env "github.com/caitlinelfring/go-env-default"
 	"github.com/tamcore/imagepullsecret-patcher/internal/namespace"
 )
 
@@ -36,25 +36,48 @@ type Config struct {
 	ExcludedNamespaces               string
 	ExcludeAnnotation                string
 	ServiceAccounts                  string
+	FeatureDeletePods                bool
+	FeatureWatchDockerConfigJSONPath bool
+	MaxConcurrentReconciles          int
 	AnnotationManagedBy              string
 	AnnotationAppName                string
-	FeatureDeletePods                bool
-	FeatureWatchDockerConfigJSONPath bool
 }
 
-type ConfigOptions struct {
-	DockerConfigJSON                 string
-	DockerConfigJSONPath             string
-	SecretName                       string
-	SecretNamespace                  string
-	ExcludedNamespaces               string
-	ExcludeAnnotation                string
-	ServiceAccounts                  string
-	FeatureDeletePods                bool
-	FeatureWatchDockerConfigJSONPath bool
+// ConfigOption is a functional option for Config.
+type ConfigOption func(*Config)
+
+func WithDockerConfigJSON(val string) ConfigOption {
+	return func(c *Config) { c.DockerConfigJSON = val }
+}
+func WithDockerConfigJSONPath(val string) ConfigOption {
+	return func(c *Config) { c.DockerConfigJSONPath = val }
+}
+func WithSecretName(val string) ConfigOption {
+	return func(c *Config) { c.SecretName = val }
+}
+func WithSecretNamespace(val string) ConfigOption {
+	return func(c *Config) { c.SecretNamespace = val }
+}
+func WithExcludedNamespaces(val string) ConfigOption {
+	return func(c *Config) { c.ExcludedNamespaces = val }
+}
+func WithExcludeAnnotation(val string) ConfigOption {
+	return func(c *Config) { c.ExcludeAnnotation = val }
+}
+func WithServiceAccounts(val string) ConfigOption {
+	return func(c *Config) { c.ServiceAccounts = val }
+}
+func WithFeatureDeletePods(val bool) ConfigOption {
+	return func(c *Config) { c.FeatureDeletePods = val }
+}
+func WithFeatureWatchDockerConfigJSONPath(val bool) ConfigOption {
+	return func(c *Config) { c.FeatureWatchDockerConfigJSONPath = val }
+}
+func WithMaxConcurrentReconciles(val int) ConfigOption {
+	return func(c *Config) { c.MaxConcurrentReconciles = val }
 }
 
-func NewConfig(options ...ConfigOptions) *Config {
+func NewConfig(opts ...ConfigOption) *Config {
 	c := &Config{
 		DockerConfigJSON:                 env.GetDefault("CONFIG_DOCKERCONFIGJSON", ""),
 		DockerConfigJSONPath:             env.GetDefault("CONFIG_DOCKERCONFIGJSONPATH", ""),
@@ -67,36 +90,11 @@ func NewConfig(options ...ConfigOptions) *Config {
 		AnnotationAppName:                AnnotationAppName,
 		FeatureDeletePods:                env.GetBoolDefault("CONFIG_DELETE_PODS", false),
 		FeatureWatchDockerConfigJSONPath: env.GetBoolDefault("CONFIG_WATCH_DOCKERCONFIGJSONPATH", false),
+		MaxConcurrentReconciles:          env.GetIntDefault("CONFIG_MAX_CONCURRENT_RECONCILES", 1),
 	}
 
-	for _, opt := range options {
-		if opt.FeatureDeletePods {
-			c.FeatureDeletePods = opt.FeatureDeletePods
-		}
-		if opt.FeatureWatchDockerConfigJSONPath {
-			c.FeatureWatchDockerConfigJSONPath = opt.FeatureWatchDockerConfigJSONPath
-		}
-		if opt.DockerConfigJSON != "" {
-			c.DockerConfigJSON = opt.DockerConfigJSON
-		}
-		if opt.DockerConfigJSONPath != "" {
-			c.DockerConfigJSONPath = opt.DockerConfigJSONPath
-		}
-		if opt.SecretName != "" {
-			c.SecretName = opt.SecretName
-		}
-		if opt.SecretNamespace != "" {
-			c.SecretNamespace = opt.SecretNamespace
-		}
-		if opt.ExcludedNamespaces != "" {
-			c.ExcludedNamespaces = opt.ExcludedNamespaces
-		}
-		if opt.ExcludeAnnotation != "" {
-			c.ExcludeAnnotation = opt.ExcludeAnnotation
-		}
-		if opt.ServiceAccounts != "" {
-			c.ServiceAccounts = opt.ServiceAccounts
-		}
+	for _, opt := range opts {
+		opt(c)
 	}
 
 	if c.SecretNamespace == "" {

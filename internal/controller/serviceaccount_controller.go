@@ -25,6 +25,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
@@ -97,6 +98,7 @@ func (r *ServiceAccountReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("ServiceAccountController").
 		For(&corev1.ServiceAccount{}).
+		WithOptions(controller.Options{MaxConcurrentReconciles: r.Config.MaxConcurrentReconciles}).
 		WithEventFilter(predicate.Funcs{
 			CreateFunc: func(e event.CreateEvent) bool {
 				ns, err := utils.FetchNamespace(ctx, r.Client, e.Object.GetNamespace())
