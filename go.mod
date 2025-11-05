@@ -1,6 +1,6 @@
 module github.com/tamcore/imagepullsecret-patcher
 
-go 1.25.3
+go 1.25.4
 
 require (
 	github.com/KimMachineGun/automemlimit v0.7.5
