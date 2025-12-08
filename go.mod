@@ -6,7 +6,7 @@ require (
 	github.com/KimMachineGun/automemlimit v0.7.5
 	github.com/caitlinelfring/go-env-default v1.1.0
 	github.com/onsi/ginkgo/v2 v2.27.3
-	github.com/onsi/gomega v1.38.2
+	github.com/onsi/gomega v1.38.3
 	go.uber.org/automaxprocs v1.6.0
 	k8s.io/api v0.34.2
 	k8s.io/apimachinery v0.34.2
