@@ -252,16 +252,19 @@ func ConstructImagePullSecret(c *config.Config, namespace string) (*corev1.Secre
 
 func GetDockerConfigJSON(c *config.Config) (string, error) {
 	if c.DockerConfigJSON == "" && c.DockerConfigJSONPath == "" {
-		return "", fmt.Errorf("neither `CONFIG_DOCKERCONFIGJSON or `CONFIG_DOCKERCONFIGJSONPATH defined")
+		return "", fmt.Errorf("neither CONFIG_DOCKERCONFIGJSON nor CONFIG_DOCKERCONFIGJSONPATH defined")
 	}
 	if c.DockerConfigJSON != "" && c.DockerConfigJSONPath != "" {
-		return "", fmt.Errorf("cannot specify both `CONFIG_DOCKERCONFIGJSON` and `CONFIG_DOCKERCONFIGJSONPATH`")
+		return "", fmt.Errorf("cannot specify both CONFIG_DOCKERCONFIGJSON and CONFIG_DOCKERCONFIGJSONPATH")
 	}
 	if c.DockerConfigJSON != "" {
 		return c.DockerConfigJSON, nil
 	}
-	b, ok := os.ReadFile(c.DockerConfigJSONPath)
-	return string(b), ok
+	b, err := os.ReadFile(c.DockerConfigJSONPath)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
 }
 
 func WaitUntilFileChanges(filename string) {

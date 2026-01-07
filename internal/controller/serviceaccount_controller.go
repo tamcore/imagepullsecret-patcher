@@ -76,7 +76,8 @@ func (r *ServiceAccountReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	if !reflect.DeepEqual(serviceAccount.ImagePullSecrets, patchedServiceAccount.ImagePullSecrets) {
 		err = r.Patch(ctx, patchedServiceAccount, patchFrom)
 		if err != nil {
-			return ctrl.Result{}, fmt.Errorf("[%s] Failed to patch ImagePullSecret to ServiceAccount '"+serviceAccount.GetName()+"' in namespace '"+serviceAccount.GetNamespace()+"': %w", err)
+			return ctrl.Result{}, fmt.Errorf("failed to patch ImagePullSecret to ServiceAccount %s in namespace %s: %w",
+				serviceAccount.GetName(), serviceAccount.GetNamespace(), err)
 		}
 		log.Info("Attached ImagePullSecret to ServiceAccount '" + serviceAccount.GetName() + "' in namespace '" + serviceAccount.GetNamespace() + "'")
 

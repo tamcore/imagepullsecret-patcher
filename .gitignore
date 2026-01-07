@@ -32,3 +32,4 @@ go.work
 values-mine.yaml
 dist/
 *.mk
+.github/copilot-instructions.md
