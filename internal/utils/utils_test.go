@@ -123,14 +123,17 @@ func Test_IsServiceAccountManaged(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			config := config.NewConfig(
+			cfg, err := config.NewConfig(
 				config.WithDockerConfigJSON("xx"),
 				config.WithSecretNamespace("kube-system"),
 				config.WithServiceAccounts(tt.configServiceAccounts),
 			)
+			if err != nil {
+				t.Fatalf("failed to create config: %v", err)
+			}
 			// config.ServiceAccounts = tt.configServiceAccounts
 
-			if got := IsServiceAccountManaged(config, tt.args.namespace, tt.args.serviceAccount); got != tt.want {
+			if got := IsServiceAccountManaged(cfg, tt.args.namespace, tt.args.serviceAccount); got != tt.want {
 				t.Errorf("IsServiceAccountManaged() = %v, want %v", got, tt.want)
 			}
 		})
@@ -138,10 +141,13 @@ func Test_IsServiceAccountManaged(t *testing.T) {
 }
 
 func Test_IsManagedSecret(t *testing.T) {
-	config := config.NewConfig(
+	cfg, err := config.NewConfig(
 		config.WithDockerConfigJSON("xx"),
 		config.WithSecretNamespace("kube-system"),
 	)
+	if err != nil {
+		t.Fatalf("failed to create config: %v", err)
+	}
 	type args struct {
 		namespace client.Object
 		secret    client.Object
@@ -197,8 +203,8 @@ func Test_IsManagedSecret(t *testing.T) {
 				},
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      config.SecretName,
-						Namespace: config.SecretNamespace,
+						Name:      cfg.SecretName,
+						Namespace: cfg.SecretNamespace,
 					},
 				},
 			},
@@ -207,7 +213,7 @@ func Test_IsManagedSecret(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := IsManagedSecret(config, tt.args.namespace, tt.args.secret); got != tt.want {
+			if got := IsManagedSecret(cfg, tt.args.namespace, tt.args.secret); got != tt.want {
 				t.Errorf("IsManagedSecret() = %v, want %v", got, tt.want)
 			}
 		})

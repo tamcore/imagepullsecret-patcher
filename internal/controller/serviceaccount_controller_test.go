@@ -61,14 +61,17 @@ var _ = Describe("ServiceAccount Controller", func() {
 	Context("When reconciling a ServiceAccount", func() {
 		var err error
 		ctx := context.Background()
-		config := config.NewConfig(
+		cfg, err := config.NewConfig(
 			config.WithDockerConfigJSON(imagePullSecretData),
 			config.WithSecretNamespace("kube-system"),
 			config.WithFeatureDeletePods(true),
 		)
+		if err != nil {
+			panic(err)
+		}
 
 		It("should successfully reconcile the resource", func() {
-			namespace, serviceAccount, serviceAccountNN, secretNN := makeObjects("testns-1", "default", config.SecretName)
+			namespace, serviceAccount, serviceAccountNN, secretNN := makeObjects("testns-1", "default", cfg.SecretName)
 
 			By("Creating the Namespace to perform the tests")
 			Expect(k8sClient.Create(ctx, namespace.DeepCopy())).Should(Succeed())
@@ -138,7 +141,7 @@ var _ = Describe("ServiceAccount Controller", func() {
 			serviceAccountReconciler := &ServiceAccountReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
-				Config: config,
+				Config: cfg,
 			}
 			_, err = serviceAccountReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: serviceAccountNN,
@@ -181,14 +184,14 @@ var _ = Describe("ServiceAccount Controller", func() {
 		})
 
 		It("should not reconcile the resource", func() {
-			namespace, serviceAccount, serviceAccountNN, secretNN := makeObjects("testns-2", "default", config.SecretName)
+			namespace, serviceAccount, serviceAccountNN, secretNN := makeObjects("testns-2", "default", cfg.SecretName)
 
 			By("Creating the Namespace to perform the tests")
 			Expect(k8sClient.Create(ctx, namespace.DeepCopy())).Should(Succeed())
 
 			By("Creating the ServiceAccount to reconcile")
 			serviceAccount.Annotations = map[string]string{
-				config.ExcludeAnnotation: "true",
+				cfg.ExcludeAnnotation: "true",
 			}
 			Expect(k8sClient.Create(ctx, serviceAccount.DeepCopy())).Should(Succeed())
 
@@ -196,7 +199,7 @@ var _ = Describe("ServiceAccount Controller", func() {
 			serviceAccountReconciler := &ServiceAccountReconciler{
 				Client: k8sClient,
 				Scheme: k8sClient.Scheme(),
-				Config: config,
+				Config: cfg,
 			}
 			_, err = serviceAccountReconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: serviceAccountNN,

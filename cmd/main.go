@@ -184,7 +184,11 @@ func main() {
 	}
 
 	// Now pass all functional options to NewConfig
-	controllerConfig := config.NewConfig(configOpts...)
+	controllerConfig, err := config.NewConfig(configOpts...)
+	if err != nil {
+		setupLog.Error(err, "invalid configuration")
+		os.Exit(1)
+	}
 
 	if err = (&controller.ServiceAccountReconciler{
 		Client: mgr.GetClient(),

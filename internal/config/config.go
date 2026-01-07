@@ -14,6 +14,8 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
+// Package config provides configuration loading and helpers for the
+// imagepullsecret-patcher operator.
 package config
 
 import (
@@ -77,7 +79,9 @@ func WithMaxConcurrentReconciles(val int) ConfigOption {
 	return func(c *Config) { c.MaxConcurrentReconciles = val }
 }
 
-func NewConfig(opts ...ConfigOption) *Config {
+// NewConfig constructs a Config from environment defaults and functional options.
+// It returns an error instead of panicking for easier testing and caller handling.
+func NewConfig(opts ...ConfigOption) (*Config, error) {
 	c := &Config{
 		DockerConfigJSON:                 env.GetDefault("CONFIG_DOCKERCONFIGJSON", ""),
 		DockerConfigJSONPath:             env.GetDefault("CONFIG_DOCKERCONFIGJSONPATH", ""),
@@ -100,17 +104,17 @@ func NewConfig(opts ...ConfigOption) *Config {
 	if c.SecretNamespace == "" {
 		operatorNamespace, err := namespace.GetOperatorNamespace()
 		if err != nil {
-			panic(err)
+			return nil, fmt.Errorf("failed to detect operator namespace: %w", err)
 		}
 		c.SecretNamespace = operatorNamespace
 	}
 
 	if c.DockerConfigJSON == "" && c.DockerConfigJSONPath == "" {
-		panic("Neither `CONFIG_DOCKERCONFIGJSON or `CONFIG_DOCKERCONFIGJSONPATH defined.")
+		return nil, fmt.Errorf("neither CONFIG_DOCKERCONFIGJSON nor CONFIG_DOCKERCONFIGJSONPATH defined")
 	}
 	if c.DockerConfigJSON != "" && c.DockerConfigJSONPath != "" {
-		panic(fmt.Sprintf("Cannot specify both `CONFIG_DOCKERCONFIGJSON` (%s) and `CONFIG_DOCKERCONFIGJSONPATH` (%s)", c.DockerConfigJSON, c.DockerConfigJSONPath))
+		return nil, fmt.Errorf("cannot specify both CONFIG_DOCKERCONFIGJSON (%s) and CONFIG_DOCKERCONFIGJSONPATH (%s)", c.DockerConfigJSON, c.DockerConfigJSONPath)
 	}
 
-	return c
+	return c, nil
 }
