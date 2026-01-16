@@ -1,3 +1,5 @@
+version: 2
+
 builds:
   -
     main: cmd/main.go
@@ -15,8 +17,7 @@ builds:
 archives:
   -
     id: tar
-    format: tar.gz
-    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}.tar.gz"
 
 checksum:
   name_template: "{{ .Version }}_SHA256SUMS"
