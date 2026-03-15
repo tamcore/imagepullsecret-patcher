@@ -22,10 +22,14 @@ import (
 
 	"github.com/KimMachineGun/automemlimit/memlimit"
 	"go.uber.org/automaxprocs/maxprocs"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -137,6 +141,13 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
+	// Configure cache to only watch secrets managed by this controller.
+	// This prevents the controller from listing/watching ALL secrets cluster-wide,
+	// which can cause excessive etcd load (261MB+ responses) in large clusters.
+	managedSecretSelector := labels.SelectorFromSet(labels.Set{
+		config.LabelManagedBy: config.AnnotationAppName,
+	})
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
 		Metrics: metricsserver.Options{
@@ -147,6 +158,13 @@ func main() {
 		LeaderElection:                enableLeaderElection,
 		LeaderElectionID:              "tamcore.github.com-imagepullsecret-patcher",
 		LeaderElectionReleaseOnCancel: true,
+		Cache: cache.Options{
+			ByObject: map[client.Object]cache.ByObject{
+				&corev1.Secret{}: {
+					Label: managedSecretSelector,
+				},
+			},
+		},
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")

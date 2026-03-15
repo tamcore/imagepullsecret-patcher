@@ -150,6 +150,10 @@ LOCALBIN ?= $(shell pwd)/bin
 $(LOCALBIN):
 	mkdir -p $(LOCALBIN)
 
+## OS and ARCH detection for prebuilt binaries
+OS := $(shell uname -s | tr '[:upper:]' '[:lower:]')
+ARCH := $(shell uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/;s/arm64/arm64/')
+
 ## Tool Binaries
 KUBECTL ?= kubectl
 HELM ?= $(LOCALBIN)/helm-$(HELM_VERSION)
@@ -162,7 +166,7 @@ KO = $(LOCALBIN)/ko-$(KO_VERSION)
 
 ## Tool Versions
 # renovate: datasource=github-releases depName=helm/helm
-HELM_VERSION ?= v4.1.1
+HELM_VERSION ?= v4.1.3
 # renovate: datasource=github-releases depName=kubernetes-sigs/controller-tools
 CONTROLLER_TOOLS_VERSION ?= v0.20.1
 
@@ -172,7 +176,7 @@ ENVTEST_VERSION ?= $(shell go list -m -f "{{ .Version }}" sigs.k8s.io/controller
 ENVTEST_K8S_VERSION ?= $(shell go list -m -f "{{ .Version }}" k8s.io/api | awk -F'[v.]' '{printf "1.%d", $$3}')
 
 # renovate: datasource=github-releases depName=golangci/golangci-lint
-GOLANGCI_LINT_VERSION ?= v2.11.1
+GOLANGCI_LINT_VERSION ?= v2.11.3
 
 # renovate: datasource=github-releases depName=kubernetes-sigs/kind
 KIND_VERSION ?= v0.31.0
@@ -239,3 +243,44 @@ GOBIN=$(LOCALBIN) go install $${package} ;\
 mv "$$(echo "$(1)" | sed "s/-$(3)$$//")" $(1) ;\
 }
 endef
+
+##@ Prebuilt Binaries (for CI)
+
+.PHONY: helm-prebuilt
+helm-prebuilt: ## Download prebuilt helm binary.
+	@echo "Downloading helm $(HELM_VERSION) binary..."
+	@mkdir -p bin
+	curl -sSL https://get.helm.sh/helm-$(HELM_VERSION)-$(OS)-$(ARCH).tar.gz | tar -xz -C bin && mv bin/$(OS)-$(ARCH)/helm $(HELM)
+	rm -rf bin/$(OS)-$(ARCH)
+
+.PHONY: envtest-prebuilt
+envtest-prebuilt: ## Download prebuilt setup-envtest binary.
+	@echo "Downloading setup-envtest $(ENVTEST_VERSION) binary..."
+	@mkdir -p bin
+	curl -sSL -o $(ENVTEST) https://github.com/kubernetes-sigs/controller-runtime/releases/download/$(ENVTEST_VERSION)/setup-envtest-$(ENVTEST_VERSION)-$(OS)-$(ARCH)
+	chmod +x $(ENVTEST)
+
+.PHONY: kind-prebuilt
+kind-prebuilt: ## Download prebuilt kind binary.
+	@echo "Downloading kind $(KIND_VERSION) binary..."
+	@mkdir -p bin
+	curl -sSL -o $(KIND) https://github.com/kubernetes-sigs/kind/releases/download/$(KIND_VERSION)/kind-$(OS)-$(ARCH)
+	chmod +x $(KIND)
+
+.PHONY: chainsaw-prebuilt
+chainsaw-prebuilt: ## Download prebuilt chainsaw binary.
+	@echo "Downloading chainsaw $(CHAINSAW_VERSION) binary..."
+	@mkdir -p bin
+	curl -sSL https://github.com/kyverno/chainsaw/releases/download/$(CHAINSAW_VERSION)/chainsaw_$(OS)_$(ARCH).tar.gz | tar -xz -C bin && mv bin/chainsaw $(CHAINSAW)
+
+.PHONY: ko-prebuilt
+ko-prebuilt: ## Download prebuilt ko binary.
+	@echo "Downloading ko $(KO_VERSION) binary..."
+	@mkdir -p bin
+	curl -sSL https://github.com/ko-build/ko/releases/download/$(KO_VERSION)/ko_$(shell echo $(KO_VERSION) | sed 's/^v//')_$(shell echo $(OS) | sed 's/darwin/Darwin/;s/linux/Linux/')_$(shell echo $(ARCH) | sed 's/amd64/x86_64/').tar.gz | tar -xz -C bin && mv bin/ko $(KO)
+
+.PHONY: e2e-prebuilts
+e2e-prebuilts: chainsaw-prebuilt kind-prebuilt ## Download prebuilt binaries for e2e tests.
+
+.PHONY: prebuilts
+prebuilts: ko-prebuilt helm-prebuilt e2e-prebuilts ## Download all prebuilt binaries.

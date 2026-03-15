@@ -237,6 +237,9 @@ func ConstructImagePullSecret(c *config.Config, namespace string) (*corev1.Secre
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      c.SecretName,
 			Namespace: namespace,
+			Labels: map[string]string{
+				config.LabelManagedBy: config.AnnotationAppName,
+			},
 			Annotations: map[string]string{
 				config.AnnotationManagedBy: config.AnnotationAppName,
 			},
