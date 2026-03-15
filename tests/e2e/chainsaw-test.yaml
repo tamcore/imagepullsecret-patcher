@@ -20,6 +20,8 @@ spec:
               metadata:
                 name: global-imagepullsecret
                 namespace: managed-namespace
+                labels:
+                  app.kubernetes.io/managed-by: imagepullsecret-patcher
         
         - assert:
             resource:
