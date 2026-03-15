@@ -28,6 +28,8 @@ import (
 const (
 	AnnotationManagedBy = "app.kubernetes.io/managed-by"
 	AnnotationAppName   = "imagepullsecret-patcher"
+	// LabelManagedBy is used for cache selector filtering to reduce API server load
+	LabelManagedBy = "app.kubernetes.io/managed-by"
 )
 
 type Config struct {

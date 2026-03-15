@@ -120,10 +120,14 @@ func (r *SecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				// Wait, until DockerConfigJSONPath has changed
 				utils.WaitUntilFileChanges(r.Config.DockerConfigJSONPath)
 
-				// Fetch all Secrets
+				// Fetch managed Secrets using the cached client (which respects the label selector).
+				// This avoids listing ALL secrets cluster-wide, reducing etcd load significantly.
 				secretList := &corev1.SecretList{}
-				if err := r.List(ctx, secretList); err != nil {
+				if err := r.List(ctx, secretList, client.MatchingLabels{
+					config.LabelManagedBy: config.AnnotationAppName,
+				}); err != nil {
 					log.FromContext(ctx).Error(err, "error listing secrets")
+					continue
 				}
 
 				for _, d := range secretList.Items {
