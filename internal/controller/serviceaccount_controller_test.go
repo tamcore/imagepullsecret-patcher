@@ -26,8 +26,15 @@ import (
 
 	"github.com/tamcore/imagepullsecret-patcher/internal/config"
 	corev1 "k8s.io/api/core/v1"
+	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -212,6 +219,103 @@ var _ = Describe("ServiceAccount Controller", func() {
 			// This should error out, as the ServiceAccount has the excludeAnnotation
 			// and therefore the Secret should not be created.
 			Expect(err).To(HaveOccurred())
+		})
+	})
+
+	// Regression test for: secrets "paas-imagepullsecret" already exists
+	// When upgrading from a version that didn't set the managed-by label,
+	// the label-filtered cache returns NotFound for pre-existing secrets,
+	// causing Create to fail with AlreadyExists.
+	Context("When upgrading from a version without the managed-by label", func() {
+		ctx := context.Background()
+		cfg, err := config.NewConfig(
+			config.WithDockerConfigJSON(imagePullSecretData),
+			config.WithSecretNamespace("kube-system"),
+		)
+		if err != nil {
+			panic(err)
+		}
+
+		It("should adopt the pre-existing secret and add managed-by labels", func() {
+			namespace, serviceAccount, serviceAccountNN, secretNN := makeObjects("testns-upgrade", "default", cfg.SecretName)
+
+			oldSecretData := `{"auth":{"old.example.com":{}}}`
+			preExistingSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      cfg.SecretName,
+					Namespace: namespace.GetName(),
+				},
+				Data: map[string][]byte{
+					corev1.DockerConfigJsonKey: []byte(oldSecretData),
+				},
+				Type: corev1.SecretTypeDockerConfigJson,
+			}
+
+			// Build a client that simulates label-filtered cache behavior.
+			// In production, the manager's cache only watches secrets with the
+			// managed-by label. Pre-existing secrets without it are invisible
+			// to Get (returns NotFound) while still existing in the API server
+			// (Create returns AlreadyExists).
+			testScheme := kruntime.NewScheme()
+			Expect(clientgoscheme.AddToScheme(testScheme)).NotTo(HaveOccurred())
+
+			labelFilteredClient := fake.NewClientBuilder().
+				WithScheme(testScheme).
+				WithObjects(
+					namespace.DeepCopy(),
+					serviceAccount.DeepCopy(),
+					preExistingSecret,
+				).
+				WithInterceptorFuncs(interceptor.Funcs{
+					Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+						if err := c.Get(ctx, key, obj, opts...); err != nil {
+							return err
+						}
+						// Simulate label-filtered cache: secrets without the
+						// managed-by label are invisible and appear as NotFound.
+						if secret, ok := obj.(*corev1.Secret); ok {
+							if secret.Labels[config.LabelManagedBy] != config.AnnotationAppName {
+								return apierrs.NewNotFound(
+									schema.GroupResource{Group: "", Resource: "secrets"},
+									key.Name,
+								)
+							}
+						}
+						return nil
+					},
+				}).
+				Build()
+
+			By("Reconciling the ServiceAccount with a pre-existing unlabeled secret")
+			reconciler := &ServiceAccountReconciler{
+				Client: labelFilteredClient,
+				Scheme: testScheme,
+				Config: cfg,
+			}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: serviceAccountNN,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying the secret was adopted with managed-by label and annotation")
+			foundSecret := &corev1.Secret{}
+			Expect(labelFilteredClient.Get(ctx, secretNN, foundSecret)).To(Succeed())
+			Expect(foundSecret.Labels).To(HaveKeyWithValue(config.LabelManagedBy, config.AnnotationAppName))
+			Expect(foundSecret.Annotations).To(HaveKeyWithValue(config.AnnotationManagedBy, config.AnnotationAppName))
+
+			By("Verifying the secret data was updated to current credentials")
+			Expect(string(foundSecret.Data[corev1.DockerConfigJsonKey])).To(Equal(imagePullSecretData))
+
+			By("Verifying the ServiceAccount has the imagePullSecret reference")
+			foundSA := &corev1.ServiceAccount{}
+			Expect(labelFilteredClient.Get(ctx, serviceAccountNN, foundSA)).To(Succeed())
+			Expect(foundSA.ImagePullSecrets).To(ContainElement(corev1.LocalObjectReference{Name: cfg.SecretName}))
+
+			By("Verifying idempotency - second reconciliation succeeds without errors")
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: serviceAccountNN,
+			})
+			Expect(err).NotTo(HaveOccurred())
 		})
 	})
 })
