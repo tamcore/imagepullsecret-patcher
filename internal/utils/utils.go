@@ -18,6 +18,7 @@ package utils
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -202,6 +203,11 @@ func ReconcileImagePullSecret(ctx context.Context, k8sClient client.Client, c *c
 		if apierrs.IsNotFound(err) {
 			// If Secret does not exist create it right away and return
 			if err := k8sClient.Create(ctx, desiredSecret); err != nil {
+				if apierrs.IsAlreadyExists(err) {
+					// Secret exists but is not in the label-filtered cache (e.g., pre-existing
+					// installation without the managed-by label). Patch it to adopt ownership.
+					return patchUnmanagedSecret(ctx, k8sClient, desiredSecret)
+				}
 				return false, fmt.Errorf("failed to create Secret: %v", err)
 			}
 			return true, nil
@@ -225,6 +231,31 @@ func ReconcileImagePullSecret(ctx context.Context, k8sClient client.Client, c *c
 		}
 	}
 	return doPatch, nil
+}
+
+// patchUnmanagedSecret patches an existing secret that is not in the label-filtered cache.
+// This handles upgrades from older versions that created secrets without the managed-by label.
+func patchUnmanagedSecret(ctx context.Context, k8sClient client.Client, desiredSecret *corev1.Secret) (bool, error) {
+	patchBytes, err := json.Marshal(map[string]interface{}{
+		"metadata": map[string]interface{}{
+			"labels":      desiredSecret.Labels,
+			"annotations": desiredSecret.Annotations,
+		},
+		"data": desiredSecret.Data,
+	})
+	if err != nil {
+		return false, fmt.Errorf("failed to marshal patch: %v", err)
+	}
+	target := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      desiredSecret.Name,
+			Namespace: desiredSecret.Namespace,
+		},
+	}
+	if err := k8sClient.Patch(ctx, target, client.RawPatch(types.MergePatchType, patchBytes)); err != nil {
+		return false, fmt.Errorf("failed to patch existing Secret: %v", err)
+	}
+	return true, nil
 }
 
 func ConstructImagePullSecret(c *config.Config, namespace string) (*corev1.Secret, error) {
