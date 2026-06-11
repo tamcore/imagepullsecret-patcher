@@ -242,22 +242,49 @@ func ReconcileImagePullSecret(ctx context.Context, k8sClient client.Client, c *c
 		return false, fmt.Errorf("while fetching Secret: %v", err)
 	}
 
-	inClusterSecret := secret.DeepCopy()
 	patchFrom := client.MergeFrom(secret.DeepCopy())
-	secret.Annotations = desiredSecret.Annotations
-	secret.Data = desiredSecret.Data
 
-	doPatch := !reflect.DeepEqual(inClusterSecret.Annotations, desiredSecret.Annotations)
+	// Enforce managed annotations/labels key-wise, so that annotations or labels
+	// added by users or third-party controllers are preserved. The managed-by
+	// label is enforced here as well, to keep hand-edited secrets inside the
+	// label-filtered cache.
+	annotations, annotationsChanged := enforceMapEntries(secret.Annotations, desiredSecret.Annotations)
+	labels, labelsChanged := enforceMapEntries(secret.Labels, desiredSecret.Labels)
+	secret.Annotations = annotations
+	secret.Labels = labels
 
-	if !reflect.DeepEqual(inClusterSecret.Data, desiredSecret.Data) {
+	doPatch := annotationsChanged || labelsChanged
+	if !reflect.DeepEqual(secret.Data, desiredSecret.Data) {
+		secret.Data = desiredSecret.Data
 		doPatch = true
 	}
+
 	if doPatch {
 		if err = k8sClient.Patch(ctx, secret, patchFrom); err != nil {
 			return false, fmt.Errorf("error while patching Secret '"+desiredSecret.GetName()+"' in namespace '"+desiredSecret.GetNamespace()+"': %v", err)
 		}
 	}
 	return doPatch, nil
+}
+
+// enforceMapEntries returns a copy of current with every key/value pair from
+// desired enforced. Keys present only in current (e.g. user or third-party
+// annotations/labels) are preserved. The boolean reports whether any desired
+// entry was missing or differing.
+func enforceMapEntries(current map[string]string, desired map[string]string) (map[string]string, bool) {
+	merged := make(map[string]string, len(current)+len(desired))
+	for k, v := range current {
+		merged[k] = v
+	}
+
+	changed := false
+	for k, v := range desired {
+		if existing, ok := merged[k]; !ok || existing != v {
+			merged[k] = v
+			changed = true
+		}
+	}
+	return merged, changed
 }
 
 // patchUnmanagedSecret patches an existing secret that is not in the label-filtered cache.
