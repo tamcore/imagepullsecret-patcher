@@ -22,6 +22,7 @@ import (
 	"reflect"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -51,6 +52,10 @@ func (r *ServiceAccountReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	serviceAccount := &corev1.ServiceAccount{}
 	err := r.Get(ctx, req.NamespacedName, serviceAccount)
 	if err != nil {
+		if apierrs.IsNotFound(err) {
+			// ServiceAccount was deleted after the event was queued - nothing to do.
+			return ctrl.Result{}, nil
+		}
 		// Error reading the object - requeue the request.
 		log.Error(err, "Failed to get ServiceAccount")
 		return ctrl.Result{}, err
