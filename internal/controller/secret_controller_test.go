@@ -24,6 +24,7 @@ import (
 
 	"github.com/tamcore/imagepullsecret-patcher/internal/config"
 	corev1 "k8s.io/api/core/v1"
+	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -106,6 +107,46 @@ var _ = Describe("Secret Controller", func() {
 
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).To(Equal(reconcile.Result{}))
+		})
+
+		It("should ignore an annotated secret whose name differs from the managed secret", func() {
+			scheme := newTestScheme()
+			namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "secretns-foreign"}}
+			foreignSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "something-else",
+					Namespace:   namespace.GetName(),
+					Annotations: map[string]string{config.AnnotationManagedBy: config.AnnotationAppName},
+				},
+				Type: corev1.SecretTypeOpaque,
+				Data: map[string][]byte{"foo": []byte("bar")},
+			}
+			foreignSecretNN := types.NamespacedName{
+				Name:      foreignSecret.GetName(),
+				Namespace: foreignSecret.GetNamespace(),
+			}
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(namespace, foreignSecret).Build()
+			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg}
+
+			By("Snapshotting the foreign secret before reconciliation")
+			before := &corev1.Secret{}
+			Expect(c.Get(ctx, foreignSecretNN, before)).To(Succeed())
+
+			By("Reconciling a request for the foreign secret")
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{NamespacedName: foreignSecretNN})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying the managed secret was NOT created")
+			managed := &corev1.Secret{}
+			err = c.Get(ctx, types.NamespacedName{Name: cfg.SecretName, Namespace: namespace.GetName()}, managed)
+			Expect(apierrs.IsNotFound(err)).To(BeTrue())
+
+			By("Verifying the foreign secret is untouched")
+			after := &corev1.Secret{}
+			Expect(c.Get(ctx, foreignSecretNN, after)).To(Succeed())
+			Expect(after.ResourceVersion).To(Equal(before.ResourceVersion))
+			Expect(after.Data).To(Equal(map[string][]byte{"foo": []byte("bar")}))
+			Expect(after.Type).To(Equal(corev1.SecretTypeOpaque))
 		})
 	})
 

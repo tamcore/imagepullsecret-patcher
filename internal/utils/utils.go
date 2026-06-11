@@ -213,7 +213,7 @@ func deletePodIfImagePullFailed(ctx context.Context, k8sClient client.Client, po
 	return nil
 }
 
-func ReconcileImagePullSecret(ctx context.Context, k8sClient client.Client, c *config.Config, secretName string, namespace string) (bool, error) {
+func ReconcileImagePullSecret(ctx context.Context, k8sClient client.Client, c *config.Config, namespace string) (bool, error) {
 	desiredSecret, err := ConstructImagePullSecret(c, namespace)
 	if err != nil {
 		return false, fmt.Errorf("failed to construct imagePullSecret: %v", err)
@@ -222,7 +222,7 @@ func ReconcileImagePullSecret(ctx context.Context, k8sClient client.Client, c *c
 	secret := &corev1.Secret{}
 	if err := k8sClient.Get(ctx,
 		types.NamespacedName{
-			Name:      secretName,
+			Name:      c.SecretName,
 			Namespace: namespace,
 		},
 		secret,
