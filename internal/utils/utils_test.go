@@ -572,6 +572,8 @@ func Test_GetDockerConfigJSON(t *testing.T) {
 const (
 	secretNamespaceTest    = "kube-system"
 	reconcileDockerCfgJSON = `{"auths":{"reconcile.example.com":{"auth":"dGVzdDp0ZXN0"}}}`
+	foreignAnnotationKey   = "cert-manager.io/foo"
+	foreignAnnotationValue = "bar"
 )
 
 func newReconcileTestConfig(t *testing.T) *config.Config {
@@ -663,6 +665,57 @@ func Test_ReconcileImagePullSecret(t *testing.T) {
 			},
 			wantChanged: false,
 			assert:      nil,
+		},
+		{
+			name: "preserves foreign annotations and skips patch when up-to-date",
+			existing: func(t *testing.T, cfg *config.Config) *corev1.Secret {
+				return desiredSecretFixture(t, cfg, func(s *corev1.Secret) {
+					s.Annotations[foreignAnnotationKey] = foreignAnnotationValue
+				})
+			},
+			wantChanged: false,
+			assert: func(t *testing.T, cfg *config.Config, got *corev1.Secret) {
+				if got.Annotations[foreignAnnotationKey] != foreignAnnotationValue {
+					t.Errorf("foreign annotation = %q, want %q",
+						got.Annotations[foreignAnnotationKey], foreignAnnotationValue)
+				}
+			},
+		},
+		{
+			name: "restores the managed annotation while preserving foreign annotations",
+			existing: func(t *testing.T, cfg *config.Config) *corev1.Secret {
+				return desiredSecretFixture(t, cfg, func(s *corev1.Secret) {
+					s.Annotations = map[string]string{
+						foreignAnnotationKey: foreignAnnotationValue,
+					}
+				})
+			},
+			wantChanged: true,
+			assert: func(t *testing.T, cfg *config.Config, got *corev1.Secret) {
+				if got.Annotations[config.AnnotationManagedBy] != config.AnnotationAppName {
+					t.Errorf("managed-by annotation = %q, want %q",
+						got.Annotations[config.AnnotationManagedBy], config.AnnotationAppName)
+				}
+				if got.Annotations[foreignAnnotationKey] != foreignAnnotationValue {
+					t.Errorf("foreign annotation = %q, want %q",
+						got.Annotations[foreignAnnotationKey], foreignAnnotationValue)
+				}
+			},
+		},
+		{
+			name: "restores the managed label when missing",
+			existing: func(t *testing.T, cfg *config.Config) *corev1.Secret {
+				return desiredSecretFixture(t, cfg, func(s *corev1.Secret) {
+					s.Labels = nil
+				})
+			},
+			wantChanged: true,
+			assert: func(t *testing.T, cfg *config.Config, got *corev1.Secret) {
+				if got.Labels[config.LabelManagedBy] != config.AnnotationAppName {
+					t.Errorf("managed-by label = %q, want %q",
+						got.Labels[config.LabelManagedBy], config.AnnotationAppName)
+				}
+			},
 		},
 	}
 	for _, tt := range tests {
