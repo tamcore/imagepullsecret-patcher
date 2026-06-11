@@ -190,6 +190,29 @@ var _ = Describe("ServiceAccount Controller", func() {
 			Expect(err).To(Not(HaveOccurred()))
 		})
 
+		It("should ignore a ServiceAccount that no longer exists", func() {
+			_, _, serviceAccountNN, secretNN := makeObjects("testns-deleted", "ghost", cfg.SecretName)
+
+			By("Reconciling a ServiceAccount that was never created")
+			serviceAccountReconciler := &ServiceAccountReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+				Config: cfg,
+			}
+			result, err := serviceAccountReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: serviceAccountNN,
+			})
+
+			By("Expecting no error and no requeue, as NotFound must be ignored")
+			Expect(err).To(Not(HaveOccurred()))
+			Expect(result).To(Equal(reconcile.Result{}))
+
+			By("Checking that no Secret was created")
+			foundSecret := &corev1.Secret{}
+			err = k8sClient.Get(ctx, secretNN, foundSecret)
+			Expect(err).To(HaveOccurred())
+		})
+
 		It("should not reconcile the resource", func() {
 			namespace, serviceAccount, serviceAccountNN, secretNN := makeObjects("testns-2", "default", cfg.SecretName)
 
