@@ -487,4 +487,145 @@ var _ = Describe("ServiceAccount Controller", func() {
 			Expect(err).NotTo(HaveOccurred())
 		})
 	})
+
+	Context("When a namespace exclusion changes", func() {
+		ctx := context.Background()
+		cfg, err := config.NewConfig(
+			config.WithDockerConfigJSON(imagePullSecretData),
+			config.WithSecretNamespace(kubeSystemNs),
+		)
+		if err != nil {
+			panic(err)
+		}
+
+		newFakeClient := func(objs ...client.Object) client.Client {
+			scheme := kruntime.NewScheme()
+			Expect(clientgoscheme.AddToScheme(scheme)).NotTo(HaveOccurred())
+			return fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
+		}
+
+		namespaceNamed := func(name string, annotations map[string]string) *corev1.Namespace {
+			return &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{Name: name, Annotations: annotations},
+			}
+		}
+
+		serviceAccountIn := func(namespace string, name string) *corev1.ServiceAccount {
+			return &corev1.ServiceAccount{
+				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+			}
+		}
+
+		requestFor := func(namespace string, name string) reconcile.Request {
+			return reconcile.Request{
+				NamespacedName: types.NamespacedName{Namespace: namespace, Name: name},
+			}
+		}
+
+		Describe("namespaceToServiceAccounts", func() {
+			It("returns exactly one request for the default ServiceAccount in a managed namespace", func() {
+				nsName := "mapns-managed"
+				c := newFakeClient()
+				reconciler := &ServiceAccountReconciler{Client: c, Scheme: c.Scheme(), Config: cfg}
+
+				requests := reconciler.namespaceToServiceAccounts(ctx, namespaceNamed(nsName, nil))
+
+				Expect(requests).To(ConsistOf(requestFor(nsName, saDefault)))
+			})
+
+			It("returns no requests for an excluded namespace", func() {
+				c := newFakeClient()
+				reconciler := &ServiceAccountReconciler{Client: c, Scheme: c.Scheme(), Config: cfg}
+				excludedNs := namespaceNamed("mapns-excluded", map[string]string{
+					cfg.ExcludeAnnotation: annotationTrue,
+				})
+
+				Expect(reconciler.namespaceToServiceAccounts(ctx, excludedNs)).To(BeEmpty())
+			})
+
+			It("expands glob entries to matching ServiceAccounts and de-duplicates requests", func() {
+				nsName := "mapns-glob"
+				globCfg, err := config.NewConfig(
+					config.WithDockerConfigJSON(imagePullSecretData),
+					config.WithSecretNamespace(kubeSystemNs),
+					config.WithServiceAccounts("build*,default"),
+				)
+				Expect(err).NotTo(HaveOccurred())
+
+				c := newFakeClient(
+					serviceAccountIn(nsName, "build-a"),
+					serviceAccountIn(nsName, "build-b"),
+					serviceAccountIn(nsName, "other"),
+				)
+				reconciler := &ServiceAccountReconciler{Client: c, Scheme: c.Scheme(), Config: globCfg}
+
+				requests := reconciler.namespaceToServiceAccounts(ctx, namespaceNamed(nsName, nil))
+
+				Expect(requests).To(ConsistOf(
+					requestFor(nsName, "build-a"),
+					requestFor(nsName, "build-b"),
+					requestFor(nsName, saDefault),
+				))
+			})
+		})
+
+		Describe("namespaceTransitionPredicate", func() {
+			It("only passes updates that change the exclusion state", func() {
+				pred := namespaceTransitionPredicate(cfg)
+				included := namespaceNamed("transns", nil)
+				excluded := namespaceNamed("transns", map[string]string{
+					cfg.ExcludeAnnotation: annotationTrue,
+				})
+				relabeled := namespaceNamed("transns", nil)
+				relabeled.Labels = map[string]string{"team": "platform"}
+
+				By("passing updates that add the exclude annotation")
+				Expect(pred.Update(event.UpdateEvent{ObjectOld: included, ObjectNew: excluded})).To(BeTrue())
+
+				By("passing updates that remove the exclude annotation")
+				Expect(pred.Update(event.UpdateEvent{ObjectOld: excluded, ObjectNew: included})).To(BeTrue())
+
+				By("dropping unrelated label churn with unchanged exclusion state")
+				Expect(pred.Update(event.UpdateEvent{ObjectOld: included, ObjectNew: relabeled})).To(BeFalse())
+
+				By("dropping create events, as ServiceAccount creates already cover new namespaces")
+				Expect(pred.Create(event.CreateEvent{Object: included})).To(BeFalse())
+			})
+		})
+
+		It("reconciles the default ServiceAccount once the exclude annotation is removed", func() {
+			nsName := "mapns-unexcluded"
+			excludedNs := namespaceNamed(nsName, map[string]string{
+				cfg.ExcludeAnnotation: annotationTrue,
+			})
+			c := newFakeClient(excludedNs, serviceAccountIn(nsName, saDefault))
+			reconciler := &ServiceAccountReconciler{Client: c, Scheme: c.Scheme(), Config: cfg}
+
+			By("producing no requests while the namespace is still excluded")
+			Expect(reconciler.namespaceToServiceAccounts(ctx, excludedNs)).To(BeEmpty())
+
+			By("removing the exclude annotation from the namespace")
+			includedNs := excludedNs.DeepCopy()
+			includedNs.Annotations = nil
+			Expect(c.Update(ctx, includedNs)).To(Succeed())
+
+			By("mapping the now-included namespace to exactly one request")
+			requests := reconciler.namespaceToServiceAccounts(ctx, includedNs)
+			Expect(requests).To(ConsistOf(requestFor(nsName, saDefault)))
+
+			By("reconciling the mapped request")
+			_, err := reconciler.Reconcile(ctx, requests[0])
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verifying the imagePullSecret was created with the expected data")
+			foundSecret := &corev1.Secret{}
+			Expect(c.Get(ctx, types.NamespacedName{Name: cfg.SecretName, Namespace: nsName}, foundSecret)).To(Succeed())
+			Expect(string(foundSecret.Data[corev1.DockerConfigJsonKey])).To(Equal(imagePullSecretData))
+
+			By("verifying the ServiceAccount was patched with the imagePullSecret reference")
+			foundSA := &corev1.ServiceAccount{}
+			Expect(c.Get(ctx, types.NamespacedName{Name: saDefault, Namespace: nsName}, foundSA)).To(Succeed())
+			Expect(foundSA.ImagePullSecrets).To(ContainElement(corev1.LocalObjectReference{Name: cfg.SecretName}))
+		})
+	})
 })
