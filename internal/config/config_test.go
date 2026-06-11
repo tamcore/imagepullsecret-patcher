@@ -57,6 +57,24 @@ func Test_NewConfig_Validation(t *testing.T) {
 			true,
 			[]string{credential, "c3VwZXJzZWNyZXQ="},
 		},
+		{
+			"invalid JSON in dockerConfigJSON should error without leaking the value",
+			[]ConfigOption{
+				WithSecretNamespace("imagepullsecret-patcher"),
+				WithDockerConfigJSON(`{"auths":{"registry.example.com":`),
+			},
+			true,
+			[]string{`{"auths":{"registry.example.com":`},
+		},
+		{
+			"whitespace-only dockerConfigJSON should error",
+			[]ConfigOption{
+				WithSecretNamespace("imagepullsecret-patcher"),
+				WithDockerConfigJSON("   "),
+			},
+			true,
+			nil,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

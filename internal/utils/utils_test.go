@@ -17,6 +17,9 @@ limitations under the License.
 package utils
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -126,7 +129,7 @@ func Test_IsServiceAccountManaged(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg, err := config.NewConfig(
-				config.WithDockerConfigJSON("xx"),
+				config.WithDockerConfigJSON(`{"auths":{}}`),
 				config.WithSecretNamespace("kube-system"),
 				config.WithServiceAccounts(tt.configServiceAccounts),
 			)
@@ -144,7 +147,7 @@ func Test_IsServiceAccountManaged(t *testing.T) {
 
 func Test_IsManagedSecret(t *testing.T) {
 	cfg, err := config.NewConfig(
-		config.WithDockerConfigJSON("xx"),
+		config.WithDockerConfigJSON(`{"auths":{}}`),
 		config.WithSecretNamespace("kube-system"),
 	)
 	if err != nil {
@@ -260,6 +263,91 @@ func Test_HasAnnotation(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := HasAnnotation(tt.object, tt.annotationKey, tt.annotationValue); got != tt.want {
 				t.Errorf("HasAnnotation() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func Test_GetDockerConfigJSON(t *testing.T) {
+	const validJSON = `{"auths":{"registry.example.com":{"auth":"dGVzdDp0ZXN0"}}}`
+	const invalidJSON = `{"auths":{"registry.example.com":`
+
+	writeTempFile := func(t *testing.T, content string) string {
+		t.Helper()
+		path := filepath.Join(t.TempDir(), "dockerconfig.json")
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatalf("failed to write temp file: %v", err)
+		}
+		return path
+	}
+
+	tests := []struct {
+		name    string
+		setup   func(t *testing.T) []config.ConfigOption
+		want    string
+		wantErr bool
+	}{
+		{
+			"valid inline JSON is returned as-is",
+			func(t *testing.T) []config.ConfigOption {
+				return []config.ConfigOption{config.WithDockerConfigJSON(validJSON)}
+			},
+			validJSON,
+			false,
+		},
+		{
+			"valid JSON from file is returned as-is",
+			func(t *testing.T) []config.ConfigOption {
+				return []config.ConfigOption{config.WithDockerConfigJSONPath(writeTempFile(t, validJSON))}
+			},
+			validJSON,
+			false,
+		},
+		{
+			"invalid JSON from file errors without leaking content",
+			func(t *testing.T) []config.ConfigOption {
+				return []config.ConfigOption{config.WithDockerConfigJSONPath(writeTempFile(t, invalidJSON))}
+			},
+			"",
+			true,
+		},
+		{
+			"empty file errors",
+			func(t *testing.T) []config.ConfigOption {
+				return []config.ConfigOption{config.WithDockerConfigJSONPath(writeTempFile(t, ""))}
+			},
+			"",
+			true,
+		},
+		{
+			"missing file errors",
+			func(t *testing.T) []config.ConfigOption {
+				return []config.ConfigOption{config.WithDockerConfigJSONPath(filepath.Join(t.TempDir(), "nonexistent.json"))}
+			},
+			"",
+			true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			cfg := &config.Config{SecretNamespace: "kube-system"}
+			for _, opt := range tt.setup(t) {
+				opt(cfg)
+			}
+
+			// Act
+			got, err := GetDockerConfigJSON(cfg)
+
+			// Assert
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("GetDockerConfigJSON() error = %v, wantErr %v", err, tt.wantErr)
+			}
+			if err != nil && strings.Contains(err.Error(), invalidJSON) {
+				t.Errorf("GetDockerConfigJSON() error message leaks file content: %v", err)
+			}
+			if got != tt.want {
+				t.Errorf("GetDockerConfigJSON() = %q, want %q", got, tt.want)
 			}
 		})
 	}

@@ -298,6 +298,9 @@ func GetDockerConfigJSON(c *config.Config) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	if !json.Valid(b) {
+		return "", fmt.Errorf("file %q does not contain valid JSON", c.DockerConfigJSONPath)
+	}
 	return string(b), nil
 }
 
