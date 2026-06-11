@@ -220,7 +220,7 @@ func ReconcileImagePullSecret(ctx context.Context, k8sClient client.Client, apiR
 
 	desiredSecret, err := ConstructImagePullSecret(c, namespace)
 	if err != nil {
-		return false, fmt.Errorf("failed to construct imagePullSecret: %v", err)
+		return false, fmt.Errorf("failed to construct imagePullSecret: %w", err)
 	}
 
 	secret := &corev1.Secret{}
@@ -239,11 +239,11 @@ func ReconcileImagePullSecret(ctx context.Context, k8sClient client.Client, apiR
 					// installation without the managed-by label). Adopt it.
 					return adoptExistingSecret(ctx, k8sClient, apiReader, desiredSecret)
 				}
-				return false, fmt.Errorf("failed to create Secret: %v", err)
+				return false, fmt.Errorf("failed to create Secret: %w", err)
 			}
 			return true, nil
 		}
-		return false, fmt.Errorf("while fetching Secret: %v", err)
+		return false, fmt.Errorf("failed to fetch Secret: %w", err)
 	}
 
 	patchFrom := client.MergeFrom(secret.DeepCopy())
@@ -265,7 +265,7 @@ func ReconcileImagePullSecret(ctx context.Context, k8sClient client.Client, apiR
 
 	if doPatch {
 		if err = k8sClient.Patch(ctx, secret, patchFrom); err != nil {
-			return false, fmt.Errorf("error while patching Secret '"+desiredSecret.GetName()+"' in namespace '"+desiredSecret.GetNamespace()+"': %v", err)
+			return false, fmt.Errorf("failed to patch Secret %q in namespace %q: %w", desiredSecret.GetName(), desiredSecret.GetNamespace(), err)
 		}
 	}
 	return doPatch, nil
@@ -332,7 +332,7 @@ func patchUnmanagedSecret(ctx context.Context, k8sClient client.Client, desiredS
 		"data": desiredSecret.Data,
 	})
 	if err != nil {
-		return false, fmt.Errorf("failed to marshal patch: %v", err)
+		return false, fmt.Errorf("failed to marshal patch: %w", err)
 	}
 	target := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -341,7 +341,7 @@ func patchUnmanagedSecret(ctx context.Context, k8sClient client.Client, desiredS
 		},
 	}
 	if err := k8sClient.Patch(ctx, target, client.RawPatch(types.MergePatchType, patchBytes)); err != nil {
-		return false, fmt.Errorf("failed to patch existing Secret: %v", err)
+		return false, fmt.Errorf("failed to patch existing Secret: %w", err)
 	}
 	return true, nil
 }
@@ -349,7 +349,7 @@ func patchUnmanagedSecret(ctx context.Context, k8sClient client.Client, desiredS
 func ConstructImagePullSecret(c *config.Config, namespace string) (*corev1.Secret, error) {
 	dockerConfigJSON, err := GetDockerConfigJSON(c)
 	if err != nil {
-		return nil, fmt.Errorf("error while reading dockerConfigJSON from filesystem: %v", err)
+		return nil, fmt.Errorf("failed to read dockerConfigJSON: %w", err)
 	}
 
 	secret := &corev1.Secret{

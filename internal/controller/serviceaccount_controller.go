@@ -75,7 +75,7 @@ func (r *ServiceAccountReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, nil
 		}
 		// Error reading the object - requeue the request.
-		log.Error(err, "Failed to get ServiceAccount")
+		log.Error(err, "failed to get ServiceAccount")
 		return ctrl.Result{}, err
 	}
 
@@ -96,7 +96,7 @@ func (r *ServiceAccountReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 	// Ensure imagePullSecret exists before we attach it to the ServiceAccount
 	if _, err = utils.ReconcileImagePullSecret(ctx, r.Client, r.APIReader, r.Config, serviceAccount.GetNamespace()); err != nil {
-		return ctrl.Result{}, fmt.Errorf("Failed to reconcile imagePullSecret in Namespace '"+serviceAccount.GetNamespace()+"': %w", err)
+		return ctrl.Result{}, fmt.Errorf("failed to reconcile imagePullSecret in namespace %q: %w", serviceAccount.GetNamespace(), err)
 	}
 
 	patchFrom := client.MergeFrom(serviceAccount.DeepCopy())
@@ -108,14 +108,14 @@ func (r *ServiceAccountReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			return ctrl.Result{}, fmt.Errorf("failed to patch ImagePullSecret to ServiceAccount %s in namespace %s: %w",
 				serviceAccount.GetName(), serviceAccount.GetNamespace(), err)
 		}
-		log.Info("Attached ImagePullSecret to ServiceAccount '" + serviceAccount.GetName() + "' in namespace '" + serviceAccount.GetNamespace() + "'")
+		log.Info("Attached ImagePullSecret to ServiceAccount", "serviceaccount", serviceAccount.GetName(), "namespace", serviceAccount.GetNamespace())
 
 		if r.Config.FeatureDeletePods {
 			// Run Pod cleanup only if we're freshly attaching the imagePullSecret to the ServiceAccount
 			if err = utils.CleanupPodsForSA(ctx, r.Client, serviceAccount.GetNamespace(), serviceAccount.GetName()); err != nil {
 				return ctrl.Result{}, fmt.Errorf("failed to cleanup Pods in unauthorized state: %w", err)
 			}
-			log.Info("Cleaned up Pods belonging to ServiceAccount " + serviceAccount.GetName())
+			log.Info("Cleaned up Pods belonging to ServiceAccount", "serviceaccount", serviceAccount.GetName(), "namespace", serviceAccount.GetNamespace())
 		}
 	}
 
