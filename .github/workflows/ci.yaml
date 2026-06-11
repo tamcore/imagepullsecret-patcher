@@ -65,10 +65,19 @@ jobs:
     steps:
       - name: Get latest Kubernetes versions
         id: get-k8s-versions
-        uses: tamcore/charts/.github/actions/latest-k8s-versions@master
-        with:
-          count: 3
-          kind_images: true
+        # Replaces tamcore/charts/.github/actions/latest-k8s-versions, which no
+        # longer exists. Picks the newest patch release of the 3 most recent
+        # Kubernetes minor versions that actually exist as kindest/node images.
+        run: |
+          set -euo pipefail
+          versions=$(curl -fsSL "https://hub.docker.com/v2/repositories/kindest/node/tags?page_size=100" \
+            | jq -r '.results[].name' \
+            | grep -E '^v1\.[0-9]+\.[0-9]+$' \
+            | sort -V \
+            | awk -F. '{ latest[$1"."$2]=$0 } END { for (m in latest) print latest[m] }' \
+            | sort -V | tail -n 3 | jq -R . | jq -cs .)
+          echo "kind_versions=${versions}" >> "$GITHUB_OUTPUT"
+          echo "Using kind node versions: ${versions}"
 
   e2e:
     needs:
