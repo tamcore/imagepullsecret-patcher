@@ -26,6 +26,8 @@ import (
 	"github.com/tamcore/imagepullsecret-patcher/internal/config"
 )
 
+const nsDefault = "default"
+
 var (
 	True  = true
 	False = false
@@ -47,13 +49,13 @@ func Test_IsServiceAccountManaged(t *testing.T) {
 			args{
 				&corev1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "default",
+						Name: nsDefault,
 					},
 				},
 				&corev1.ServiceAccount{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "default",
-						Namespace: "default",
+						Name:      nsDefault,
+						Namespace: nsDefault,
 					},
 				},
 			},
@@ -65,13 +67,13 @@ func Test_IsServiceAccountManaged(t *testing.T) {
 			args{
 				&corev1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "default",
+						Name: nsDefault,
 					},
 				},
 				&corev1.ServiceAccount{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "default",
-						Namespace: "default",
+						Name:      nsDefault,
+						Namespace: nsDefault,
 					},
 				},
 			},
@@ -83,7 +85,7 @@ func Test_IsServiceAccountManaged(t *testing.T) {
 			args{
 				&corev1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "default",
+						Name: nsDefault,
 						Annotations: map[string]string{
 							"pborn.eu/imagepullsecret-patcher-exclude": "true",
 						},
@@ -91,8 +93,8 @@ func Test_IsServiceAccountManaged(t *testing.T) {
 				},
 				&corev1.ServiceAccount{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "default",
-						Namespace: "default",
+						Name:      nsDefault,
+						Namespace: nsDefault,
 					},
 				},
 			},
@@ -104,13 +106,13 @@ func Test_IsServiceAccountManaged(t *testing.T) {
 			args{
 				&corev1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "default",
+						Name: nsDefault,
 					},
 				},
 				&corev1.ServiceAccount{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "default",
-						Namespace: "default",
+						Name:      nsDefault,
+						Namespace: nsDefault,
 						Annotations: map[string]string{
 							"pborn.eu/imagepullsecret-patcher-exclude": "true",
 						},
@@ -162,13 +164,13 @@ func Test_IsManagedSecret(t *testing.T) {
 			args{
 				&corev1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "default",
+						Name: nsDefault,
 					},
 				},
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
-						Name:      "default",
-						Namespace: "default",
+						Name:      nsDefault,
+						Namespace: nsDefault,
 						Annotations: map[string]string{
 							config.AnnotationManagedBy: config.AnnotationAppName,
 						},
@@ -182,12 +184,12 @@ func Test_IsManagedSecret(t *testing.T) {
 			args{
 				&corev1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "default",
+						Name: nsDefault,
 					},
 				},
 				&corev1.Secret{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "default",
+						Name: nsDefault,
 					},
 				},
 			},
@@ -198,7 +200,7 @@ func Test_IsManagedSecret(t *testing.T) {
 			args{
 				&corev1.Namespace{
 					ObjectMeta: metav1.ObjectMeta{
-						Name: "default",
+						Name: nsDefault,
 					},
 				},
 				&corev1.Secret{
@@ -232,7 +234,7 @@ func Test_HasAnnotation(t *testing.T) {
 			"No annotations present. Should be false.",
 			&corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "default",
+					Name: nsDefault,
 				},
 			},
 			"foo",
@@ -243,7 +245,7 @@ func Test_HasAnnotation(t *testing.T) {
 			"Desired annotation present. Should be true.",
 			&corev1.Namespace{
 				ObjectMeta: metav1.ObjectMeta{
-					Name: "default",
+					Name: nsDefault,
 					Annotations: map[string]string{
 						config.AnnotationManagedBy: config.AnnotationAppName,
 					},
