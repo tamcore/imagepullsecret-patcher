@@ -35,6 +35,7 @@ import (
 )
 
 const (
+	kubeSystemNs     = "kube-system"
 	saDefault        = "default"
 	annotationTrue   = "true"
 	secretNsManaged  = "secretns-managed"
@@ -45,7 +46,7 @@ var _ = Describe("Secret Controller", func() {
 	ctx := context.Background()
 	cfg, err := config.NewConfig(
 		config.WithDockerConfigJSON(imagePullSecretData),
-		config.WithSecretNamespace("kube-system"),
+		config.WithSecretNamespace(kubeSystemNs),
 	)
 	if err != nil {
 		panic(err)

@@ -44,8 +44,11 @@ const namespaceCacheRetryDelay = 10 * time.Second
 // ServiceAccountReconciler reconciles a ServiceAccount object
 type ServiceAccountReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
-	Config *config.Config
+	// APIReader reads directly from the API server, bypassing the
+	// label-filtered cache (used to inspect pre-existing secrets).
+	APIReader client.Reader
+	Scheme    *runtime.Scheme
+	Config    *config.Config
 }
 
 //+kubebuilder:rbac:groups=core,resources=serviceaccounts,verbs=get;list;watch;update;patch
@@ -83,7 +86,7 @@ func (r *ServiceAccountReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	}
 
 	// Ensure imagePullSecret exists before we attach it to the ServiceAccount
-	if _, err = utils.ReconcileImagePullSecret(ctx, r.Client, r.Config, serviceAccount.GetNamespace()); err != nil {
+	if _, err = utils.ReconcileImagePullSecret(ctx, r.Client, r.APIReader, r.Config, serviceAccount.GetNamespace()); err != nil {
 		return ctrl.Result{}, fmt.Errorf("Failed to reconcile imagePullSecret in Namespace '"+serviceAccount.GetNamespace()+"': %w", err)
 	}
 

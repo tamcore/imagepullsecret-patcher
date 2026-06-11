@@ -39,8 +39,11 @@ import (
 // SecretReconciler reconciles a Secret object
 type SecretReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
-	Config *config.Config
+	// APIReader reads directly from the API server, bypassing the
+	// label-filtered cache (used to inspect pre-existing secrets).
+	APIReader client.Reader
+	Scheme    *runtime.Scheme
+	Config    *config.Config
 }
 
 //+kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
@@ -74,7 +77,7 @@ func (r *SecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 	log.Info("Reconciling imagePullSecret in " + req.Namespace)
 	doPatch := false
-	if didPatch, err := utils.ReconcileImagePullSecret(ctx, r.Client, r.Config, req.Namespace); err != nil {
+	if didPatch, err := utils.ReconcileImagePullSecret(ctx, r.Client, r.APIReader, r.Config, req.Namespace); err != nil {
 		return ctrl.Result{}, fmt.Errorf("Failed to reconcile imagePullSecret in Namespace '"+req.Namespace+"': %w", err)
 	} else {
 		doPatch = didPatch

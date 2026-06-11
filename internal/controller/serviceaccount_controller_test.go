@@ -65,13 +65,34 @@ func makeObjects(namespaceName string, serviceAccountName string, secretName str
 	return namespace, serviceAccount, serviceAccountNN, secretNN
 }
 
+// unlabeledSecretsNotFound is a Get interceptor simulating the label-filtered
+// cache used in production: secrets without the managed-by label are invisible
+// to Get (NotFound) while still existing in the API server (Create returns
+// AlreadyExists).
+func unlabeledSecretsNotFound(
+	ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption,
+) error {
+	if err := c.Get(ctx, key, obj, opts...); err != nil {
+		return err
+	}
+	if secret, ok := obj.(*corev1.Secret); ok {
+		if secret.Labels[config.LabelManagedBy] != config.AnnotationAppName {
+			return apierrs.NewNotFound(
+				schema.GroupResource{Group: "", Resource: "secrets"},
+				key.Name,
+			)
+		}
+	}
+	return nil
+}
+
 var _ = Describe("ServiceAccount Controller", func() {
 	Context("When reconciling a ServiceAccount", func() {
 		var err error
 		ctx := context.Background()
 		cfg, err := config.NewConfig(
 			config.WithDockerConfigJSON(imagePullSecretData),
-			config.WithSecretNamespace("kube-system"),
+			config.WithSecretNamespace(kubeSystemNs),
 			config.WithFeatureDeletePods(true),
 		)
 		if err != nil {
@@ -254,7 +275,7 @@ var _ = Describe("ServiceAccount Controller", func() {
 		ctx := context.Background()
 		cfg, err := config.NewConfig(
 			config.WithDockerConfigJSON(imagePullSecretData),
-			config.WithSecretNamespace("kube-system"),
+			config.WithSecretNamespace(kubeSystemNs),
 		)
 		if err != nil {
 			panic(err)
@@ -279,42 +300,29 @@ var _ = Describe("ServiceAccount Controller", func() {
 			// In production, the manager's cache only watches secrets with the
 			// managed-by label. Pre-existing secrets without it are invisible
 			// to Get (returns NotFound) while still existing in the API server
-			// (Create returns AlreadyExists).
+			// (Create returns AlreadyExists). The raw (un-intercepted) client
+			// doubles as the uncached API reader.
 			testScheme := kruntime.NewScheme()
 			Expect(clientgoscheme.AddToScheme(testScheme)).NotTo(HaveOccurred())
 
-			labelFilteredClient := fake.NewClientBuilder().
+			rawClient := fake.NewClientBuilder().
 				WithScheme(testScheme).
 				WithObjects(
 					namespace.DeepCopy(),
 					serviceAccount.DeepCopy(),
 					preExistingSecret,
 				).
-				WithInterceptorFuncs(interceptor.Funcs{
-					Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-						if err := c.Get(ctx, key, obj, opts...); err != nil {
-							return err
-						}
-						// Simulate label-filtered cache: secrets without the
-						// managed-by label are invisible and appear as NotFound.
-						if secret, ok := obj.(*corev1.Secret); ok {
-							if secret.Labels[config.LabelManagedBy] != config.AnnotationAppName {
-								return apierrs.NewNotFound(
-									schema.GroupResource{Group: "", Resource: "secrets"},
-									key.Name,
-								)
-							}
-						}
-						return nil
-					},
-				}).
 				Build()
+			labelFilteredClient := interceptor.NewClient(rawClient, interceptor.Funcs{
+				Get: unlabeledSecretsNotFound,
+			})
 
 			By("Reconciling the ServiceAccount with a pre-existing unlabeled secret")
 			reconciler := &ServiceAccountReconciler{
-				Client: labelFilteredClient,
-				Scheme: testScheme,
-				Config: cfg,
+				Client:    labelFilteredClient,
+				APIReader: rawClient,
+				Scheme:    testScheme,
+				Config:    cfg,
 			}
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
 				NamespacedName: serviceAccountNN,
@@ -347,7 +355,7 @@ var _ = Describe("ServiceAccount Controller", func() {
 		ctx := context.Background()
 		cfg, err := config.NewConfig(
 			config.WithDockerConfigJSON(imagePullSecretData),
-			config.WithSecretNamespace("kube-system"),
+			config.WithSecretNamespace(kubeSystemNs),
 		)
 		if err != nil {
 			panic(err)
@@ -403,6 +411,80 @@ var _ = Describe("ServiceAccount Controller", func() {
 
 			By("still ignoring delete events")
 			Expect(pred.Delete(event.DeleteEvent{Object: saIn("sa-predns-managed")})).To(BeFalse())
+		})
+	})
+
+	// Secret.type is immutable in Kubernetes. A pre-existing secret with the
+	// wrong type (e.g. Opaque) can never be merge-patched into a usable
+	// imagePullSecret, so it has to be deleted and recreated.
+	Context("When adopting a pre-existing secret with an incompatible type", func() {
+		ctx := context.Background()
+		cfg, err := config.NewConfig(
+			config.WithDockerConfigJSON(imagePullSecretData),
+			config.WithSecretNamespace(kubeSystemNs),
+		)
+		if err != nil {
+			panic(err)
+		}
+
+		It("should delete and recreate the secret with the correct type", func() {
+			namespace, serviceAccount, serviceAccountNN, secretNN := makeObjects("testns-wrong-type", "default", cfg.SecretName)
+
+			preExistingSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      cfg.SecretName,
+					Namespace: namespace.GetName(),
+				},
+				Data: map[string][]byte{
+					"some-key": []byte("some-value"),
+				},
+				Type: corev1.SecretTypeOpaque,
+			}
+
+			testScheme := kruntime.NewScheme()
+			Expect(clientgoscheme.AddToScheme(testScheme)).NotTo(HaveOccurred())
+
+			rawClient := fake.NewClientBuilder().
+				WithScheme(testScheme).
+				WithObjects(
+					namespace.DeepCopy(),
+					serviceAccount.DeepCopy(),
+					preExistingSecret,
+				).
+				Build()
+			labelFilteredClient := interceptor.NewClient(rawClient, interceptor.Funcs{
+				Get: unlabeledSecretsNotFound,
+			})
+
+			By("Reconciling the ServiceAccount with a pre-existing wrong-type secret")
+			reconciler := &ServiceAccountReconciler{
+				Client:    labelFilteredClient,
+				APIReader: rawClient,
+				Scheme:    testScheme,
+				Config:    cfg,
+			}
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: serviceAccountNN,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("Verifying the secret was recreated with the dockerconfigjson type")
+			foundSecret := &corev1.Secret{}
+			Expect(rawClient.Get(ctx, secretNN, foundSecret)).To(Succeed())
+			Expect(foundSecret.Type).To(Equal(corev1.SecretTypeDockerConfigJson))
+
+			By("Verifying the recreated secret carries the managed labels and annotations")
+			Expect(foundSecret.Labels).To(HaveKeyWithValue(config.LabelManagedBy, config.AnnotationAppName))
+			Expect(foundSecret.Annotations).To(HaveKeyWithValue(config.AnnotationManagedBy, config.AnnotationAppName))
+
+			By("Verifying the recreated secret contains the current credentials")
+			Expect(string(foundSecret.Data[corev1.DockerConfigJsonKey])).To(Equal(imagePullSecretData))
+
+			By("Verifying idempotency - second reconciliation succeeds without errors")
+			_, err = reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: serviceAccountNN,
+			})
+			Expect(err).NotTo(HaveOccurred())
 		})
 	})
 })
