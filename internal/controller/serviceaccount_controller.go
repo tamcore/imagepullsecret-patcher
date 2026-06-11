@@ -20,21 +20,30 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	ctrlbuilder "sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	"github.com/tamcore/imagepullsecret-patcher/internal/config"
 	"github.com/tamcore/imagepullsecret-patcher/internal/utils"
 )
+
+// globMetacharacters are the filepath.Match metacharacters supported by
+// utils.IsStringInList. Config entries containing any of them are globs.
+const globMetacharacters = "*?["
 
 // namespaceCacheRetryDelay is how long to wait before retrying when an
 // object's namespace is not yet visible in the informer cache (e.g. a
@@ -114,13 +123,89 @@ func (r *ServiceAccountReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 }
 
 // SetupWithManager sets up the controller with the Manager.
+//
+// Predicates are attached per-watch instead of via WithEventFilter, because
+// an event filter would apply to the Namespace watch as well: managedPredicate
+// treats the event object as a ServiceAccount and would look up the namespace
+// OF the namespace object (empty for cluster-scoped objects), breaking it.
 func (r *ServiceAccountReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("ServiceAccountController").
-		For(&corev1.ServiceAccount{}).
+		For(&corev1.ServiceAccount{}, ctrlbuilder.WithPredicates(r.managedPredicate())).
+		Watches(&corev1.Namespace{},
+			handler.EnqueueRequestsFromMapFunc(r.namespaceToServiceAccounts),
+			ctrlbuilder.WithPredicates(namespaceTransitionPredicate(r.Config))).
 		WithOptions(controller.Options{MaxConcurrentReconciles: r.Config.MaxConcurrentReconciles}).
-		WithEventFilter(r.managedPredicate()).
 		Complete(r)
+}
+
+// namespaceToServiceAccounts maps a Namespace event to reconcile requests for
+// every configured ServiceAccount in that namespace. Excluded namespaces map
+// to nothing: only newly-included namespaces need reconciliation, as we never
+// detach from newly-excluded ones (matching current behavior).
+func (r *ServiceAccountReconciler) namespaceToServiceAccounts(ctx context.Context, obj client.Object) []reconcile.Request {
+	if utils.IsNamespaceExcluded(r.Config, obj) {
+		return nil
+	}
+
+	seen := map[types.NamespacedName]struct{}{}
+	var requests []reconcile.Request
+	enqueue := func(name string) {
+		nn := types.NamespacedName{Namespace: obj.GetName(), Name: name}
+		if _, isDuplicate := seen[nn]; isDuplicate {
+			return
+		}
+		seen[nn] = struct{}{}
+		requests = append(requests, reconcile.Request{NamespacedName: nn})
+	}
+
+	hasGlobEntry := false
+	for _, entry := range strings.Split(r.Config.ServiceAccounts, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if strings.ContainsAny(entry, globMetacharacters) {
+			hasGlobEntry = true
+			continue
+		}
+		enqueue(entry)
+	}
+
+	if !hasGlobEntry {
+		return requests
+	}
+
+	// Glob entries can't be enqueued directly; list the ServiceAccounts in
+	// the namespace and enqueue every one matching the configured list.
+	saList := &corev1.ServiceAccountList{}
+	if err := r.List(ctx, saList, client.InNamespace(obj.GetName())); err != nil {
+		log.FromContext(ctx).Error(err, "failed to list ServiceAccounts while mapping namespace event",
+			"namespace", obj.GetName())
+		return requests
+	}
+	for _, sa := range saList.Items {
+		if utils.IsStringInList(sa.GetName(), r.Config.ServiceAccounts) {
+			enqueue(sa.GetName())
+		}
+	}
+
+	return requests
+}
+
+// namespaceTransitionPredicate only lets Namespace updates through when the
+// exclusion state changes, so periodic resync churn doesn't flood the
+// workqueue. Create events are dropped because ServiceAccount create events
+// already cover brand-new namespaces.
+func namespaceTransitionPredicate(c *config.Config) predicate.Funcs {
+	return predicate.Funcs{
+		UpdateFunc: func(e event.UpdateEvent) bool {
+			return utils.IsNamespaceExcluded(c, e.ObjectOld) != utils.IsNamespaceExcluded(c, e.ObjectNew)
+		},
+		CreateFunc:  func(e event.CreateEvent) bool { return false },
+		DeleteFunc:  func(e event.DeleteEvent) bool { return false },
+		GenericFunc: func(e event.GenericEvent) bool { return false },
+	}
 }
 
 // managedPredicate filters events down to ServiceAccounts this controller
