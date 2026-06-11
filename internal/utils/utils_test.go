@@ -588,7 +588,7 @@ func newReconcileTestConfig(t *testing.T) *config.Config {
 	return cfg
 }
 
-func newFakeClient(t *testing.T, objs ...client.Object) client.Client {
+func newFakeClient(t *testing.T, objs ...client.Object) client.WithWatch {
 	t.Helper()
 	scheme := kruntime.NewScheme()
 	if err := clientgoscheme.AddToScheme(scheme); err != nil {
@@ -728,8 +728,8 @@ func Test_ReconcileImagePullSecret(t *testing.T) {
 			}
 			k8sClient := newFakeClient(t, objs...)
 
-			// Act
-			changed, err := ReconcileImagePullSecret(context.Background(), k8sClient, cfg, nsDefault)
+			// Act (nil apiReader exercises the fallback to k8sClient)
+			changed, err := ReconcileImagePullSecret(context.Background(), k8sClient, nil, cfg, nsDefault)
 
 			// Assert
 			if err != nil {
@@ -745,6 +745,111 @@ func Test_ReconcileImagePullSecret(t *testing.T) {
 			}
 			if tt.assert != nil {
 				tt.assert(t, cfg, got)
+			}
+		})
+	}
+}
+
+// Test_ReconcileImagePullSecret_AdoptsPreExistingSecrets covers the
+// Create->AlreadyExists path: the pre-existing secret is invisible to the
+// label-filtered cache (Get is intercepted to return NotFound for unlabeled
+// secrets), but Create against the API server fails with AlreadyExists. The
+// raw (un-intercepted) client acts as the uncached API reader.
+func Test_ReconcileImagePullSecret_AdoptsPreExistingSecrets(t *testing.T) {
+	tests := []struct {
+		name         string
+		existingType corev1.SecretType
+		wantDeletes  int
+	}{
+		{
+			name:         "adopts a compatible pre-existing secret via patch without deleting it",
+			existingType: corev1.SecretTypeDockerConfigJson,
+			wantDeletes:  0,
+		},
+		{
+			name:         "deletes and recreates a pre-existing secret with incompatible type",
+			existingType: corev1.SecretTypeOpaque,
+			wantDeletes:  1,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			cfg := newReconcileTestConfig(t)
+			preExisting := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      cfg.SecretName,
+					Namespace: nsDefault,
+					Annotations: map[string]string{
+						foreignAnnotationKey: foreignAnnotationValue,
+					},
+				},
+				Data: map[string][]byte{
+					"some-key": []byte("some-value"),
+				},
+				Type: tt.existingType,
+			}
+			rawClient := newFakeClient(t, preExisting)
+
+			deleteCalls := 0
+			labelFilteredClient := interceptor.NewClient(rawClient, interceptor.Funcs{
+				Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey,
+					obj client.Object, opts ...client.GetOption) error {
+					if err := c.Get(ctx, key, obj, opts...); err != nil {
+						return err
+					}
+					if secret, ok := obj.(*corev1.Secret); ok {
+						if secret.Labels[config.LabelManagedBy] != config.AnnotationAppName {
+							return apierrs.NewNotFound(
+								schema.GroupResource{Group: "", Resource: "secrets"},
+								key.Name,
+							)
+						}
+					}
+					return nil
+				},
+				Delete: func(ctx context.Context, c client.WithWatch,
+					obj client.Object, opts ...client.DeleteOption) error {
+					deleteCalls++
+					return c.Delete(ctx, obj, opts...)
+				},
+			})
+
+			// Act
+			changed, err := ReconcileImagePullSecret(context.Background(), labelFilteredClient, rawClient, cfg, nsDefault)
+
+			// Assert
+			if err != nil {
+				t.Fatalf("ReconcileImagePullSecret() error = %v", err)
+			}
+			if !changed {
+				t.Errorf("ReconcileImagePullSecret() changed = false, want true")
+			}
+			if deleteCalls != tt.wantDeletes {
+				t.Errorf("delete calls = %d, want %d", deleteCalls, tt.wantDeletes)
+			}
+
+			got := &corev1.Secret{}
+			if err := rawClient.Get(context.Background(),
+				types.NamespacedName{Name: cfg.SecretName, Namespace: nsDefault}, got); err != nil {
+				t.Fatalf("failed to fetch reconciled Secret: %v", err)
+			}
+			if got.Type != corev1.SecretTypeDockerConfigJson {
+				t.Errorf("secret type = %q, want %q", got.Type, corev1.SecretTypeDockerConfigJson)
+			}
+			if data := string(got.Data[corev1.DockerConfigJsonKey]); data != reconcileDockerCfgJSON {
+				t.Errorf("secret data = %q, want %q", data, reconcileDockerCfgJSON)
+			}
+			if got.Labels[config.LabelManagedBy] != config.AnnotationAppName {
+				t.Errorf("managed-by label = %q, want %q", got.Labels[config.LabelManagedBy], config.AnnotationAppName)
+			}
+			if got.Annotations[config.AnnotationManagedBy] != config.AnnotationAppName {
+				t.Errorf("managed-by annotation = %q, want %q",
+					got.Annotations[config.AnnotationManagedBy], config.AnnotationAppName)
+			}
+			if tt.wantDeletes == 0 && got.Annotations[foreignAnnotationKey] != foreignAnnotationValue {
+				t.Errorf("foreign annotation = %q, want %q (adoption must not drop foreign annotations)",
+					got.Annotations[foreignAnnotationKey], foreignAnnotationValue)
 			}
 		})
 	}

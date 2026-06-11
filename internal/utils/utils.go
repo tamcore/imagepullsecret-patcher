@@ -213,7 +213,11 @@ func deletePodIfImagePullFailed(ctx context.Context, k8sClient client.Client, po
 	return nil
 }
 
-func ReconcileImagePullSecret(ctx context.Context, k8sClient client.Client, c *config.Config, namespace string) (bool, error) {
+func ReconcileImagePullSecret(ctx context.Context, k8sClient client.Client, apiReader client.Reader, c *config.Config, namespace string) (bool, error) {
+	if apiReader == nil {
+		apiReader = k8sClient
+	}
+
 	desiredSecret, err := ConstructImagePullSecret(c, namespace)
 	if err != nil {
 		return false, fmt.Errorf("failed to construct imagePullSecret: %v", err)
@@ -232,8 +236,8 @@ func ReconcileImagePullSecret(ctx context.Context, k8sClient client.Client, c *c
 			if err := k8sClient.Create(ctx, desiredSecret); err != nil {
 				if apierrs.IsAlreadyExists(err) {
 					// Secret exists but is not in the label-filtered cache (e.g., pre-existing
-					// installation without the managed-by label). Patch it to adopt ownership.
-					return patchUnmanagedSecret(ctx, k8sClient, desiredSecret)
+					// installation without the managed-by label). Adopt it.
+					return adoptExistingSecret(ctx, k8sClient, apiReader, desiredSecret)
 				}
 				return false, fmt.Errorf("failed to create Secret: %v", err)
 			}
@@ -285,6 +289,36 @@ func enforceMapEntries(current map[string]string, desired map[string]string) (ma
 		}
 	}
 	return merged, changed
+}
+
+// adoptExistingSecret handles Create conflicts for secrets that exist in the
+// cluster but are invisible to the label-filtered cache (e.g. pre-existing
+// installations without the managed-by label). The live secret is fetched via
+// the uncached apiReader. Secrets of the correct type are adopted in place via
+// merge patch. Secret.type is immutable in Kubernetes, so a secret of any
+// other type can never serve as imagePullSecret and is deleted and recreated.
+func adoptExistingSecret(ctx context.Context, k8sClient client.Client, apiReader client.Reader, desiredSecret *corev1.Secret) (bool, error) {
+	live := &corev1.Secret{}
+	if err := apiReader.Get(ctx, client.ObjectKeyFromObject(desiredSecret), live); err != nil {
+		return false, fmt.Errorf("failed to fetch pre-existing Secret: %v", err)
+	}
+
+	if live.Type == corev1.SecretTypeDockerConfigJson {
+		return patchUnmanagedSecret(ctx, k8sClient, desiredSecret)
+	}
+
+	log.FromContext(ctx).Info("Recreating pre-existing Secret with incompatible type",
+		"name", live.GetName(),
+		"namespace", live.GetNamespace(),
+		"type", string(live.Type),
+	)
+	if err := k8sClient.Delete(ctx, live, client.Preconditions{UID: &live.UID}); err != nil {
+		return false, fmt.Errorf("failed to delete pre-existing Secret with incompatible type: %v", err)
+	}
+	if err := k8sClient.Create(ctx, desiredSecret.DeepCopy()); err != nil {
+		return false, fmt.Errorf("failed to recreate Secret: %v", err)
+	}
+	return true, nil
 }
 
 // patchUnmanagedSecret patches an existing secret that is not in the label-filtered cache.
