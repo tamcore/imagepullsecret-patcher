@@ -127,33 +127,43 @@ func FetchServiceAccount(ctx context.Context, client client.Client, namespace st
 //+kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch;delete
 
 func CleanupPodsForNamespace(ctx context.Context, c *config.Config, k8sClient client.Client, namespace string) error {
+	ns, err := FetchNamespace(ctx, k8sClient, namespace)
+	if err != nil {
+		return fmt.Errorf("failed to fetch namespace: %w", err)
+	}
+	if IsNamespaceExcluded(c, ns) {
+		return nil
+	}
+
 	podList := &corev1.PodList{}
 	if err := k8sClient.List(ctx, podList, client.InNamespace(namespace)); err != nil {
 		return fmt.Errorf("failed to fetch pods: %w", err)
 	}
 
+	// Cache the managed-state per ServiceAccount so pods sharing one don't
+	// trigger repeated lookups.
+	saManaged := map[string]bool{}
 	for _, pod := range podList.Items {
-		ns, err := FetchNamespace(ctx, k8sClient, namespace)
-		if err != nil {
-			return fmt.Errorf("failed to fetch namespace: %w", err)
+		managed, known := saManaged[pod.Spec.ServiceAccountName]
+		if !known {
+			sa, err := FetchServiceAccount(ctx, k8sClient, namespace, pod.Spec.ServiceAccountName)
+			if err != nil {
+				if apierrs.IsNotFound(err) {
+					// The ServiceAccount is gone; its pods are not managed by us.
+					saManaged[pod.Spec.ServiceAccountName] = false
+					continue
+				}
+				return fmt.Errorf("failed to fetch serviceAccount: %w", err)
+			}
+			managed = IsServiceAccountManaged(c, ns, sa)
+			saManaged[pod.Spec.ServiceAccountName] = managed
 		}
-		sa, err := FetchServiceAccount(ctx, k8sClient, namespace, pod.Spec.ServiceAccountName)
-		if err != nil {
-			return fmt.Errorf("failed to fetch serviceAccount: %w", err)
-		}
-		if !IsServiceAccountManaged(c, ns, sa) {
+		if !managed {
 			continue
 		}
 
-		for _, containerStatus := range pod.Status.ContainerStatuses {
-			if containerStatus.State.Waiting != nil {
-				if containerStatus.State.Waiting.Reason == "ErrImagePull" || containerStatus.State.Waiting.Reason == "ImagePullBackOff" {
-					log.FromContext(ctx).Info("Deleting Pod " + pod.Name + " in " + pod.Namespace + " due to status " + containerStatus.State.Waiting.Reason)
-					if err := k8sClient.Delete(ctx, &pod); err != nil {
-						return fmt.Errorf("failed to delete Pod "+pod.Name+"in "+pod.Namespace+": %w", err)
-					}
-				}
-			}
+		if err := deletePodIfImagePullFailed(ctx, k8sClient, &pod); err != nil {
+			return err
 		}
 	}
 
@@ -171,18 +181,35 @@ func CleanupPodsForSA(ctx context.Context, k8sClient client.Client, namespace st
 			continue
 		}
 
-		for _, containerStatus := range pod.Status.ContainerStatuses {
-			if containerStatus.State.Waiting != nil {
-				if containerStatus.State.Waiting.Reason == "ErrImagePull" || containerStatus.State.Waiting.Reason == "ImagePullBackOff" {
-					log.FromContext(ctx).Info("Deleting Pod " + pod.Name + " in " + pod.Namespace + " due to status " + containerStatus.State.Waiting.Reason)
-					if err := k8sClient.Delete(ctx, &pod); err != nil {
-						return fmt.Errorf("failed to delete Pod "+pod.Name+"in "+pod.Namespace+": %w", err)
-					}
-				}
-			}
+		if err := deletePodIfImagePullFailed(ctx, k8sClient, &pod); err != nil {
+			return err
 		}
 	}
 
+	return nil
+}
+
+// deletePodIfImagePullFailed deletes the pod once if any of its containers is
+// stuck in an image pull failure. An already-deleted pod is not an error.
+func deletePodIfImagePullFailed(ctx context.Context, k8sClient client.Client, pod *corev1.Pod) error {
+	for _, containerStatus := range pod.Status.ContainerStatuses {
+		if containerStatus.State.Waiting == nil {
+			continue
+		}
+		reason := containerStatus.State.Waiting.Reason
+		if reason != "ErrImagePull" && reason != "ImagePullBackOff" {
+			continue
+		}
+
+		log.FromContext(ctx).Info("Deleting Pod due to image pull failure",
+			"pod", pod.Name, "namespace", pod.Namespace, "reason", reason)
+		if err := k8sClient.Delete(ctx, pod); err != nil && !apierrs.IsNotFound(err) {
+			return fmt.Errorf("failed to delete Pod %q in namespace %q: %w", pod.Name, pod.Namespace, err)
+		}
+		// The pod is deleted; checking the remaining containers would only
+		// trigger redundant deletes.
+		return nil
+	}
 	return nil
 }
 
@@ -297,6 +324,9 @@ func GetDockerConfigJSON(c *config.Config) (string, error) {
 	b, err := os.ReadFile(c.DockerConfigJSONPath)
 	if err != nil {
 		return "", err
+	}
+	if !json.Valid(b) {
+		return "", fmt.Errorf("file %q does not contain valid JSON", c.DockerConfigJSONPath)
 	}
 	return string(b), nil
 }

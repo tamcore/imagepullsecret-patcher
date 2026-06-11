@@ -20,8 +20,10 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -33,6 +35,11 @@ import (
 	"github.com/tamcore/imagepullsecret-patcher/internal/config"
 	"github.com/tamcore/imagepullsecret-patcher/internal/utils"
 )
+
+// namespaceCacheRetryDelay is how long to wait before retrying when an
+// object's namespace is not yet visible in the informer cache (e.g. a
+// brand-new namespace whose informer event hasn't arrived yet).
+const namespaceCacheRetryDelay = 10 * time.Second
 
 // ServiceAccountReconciler reconciles a ServiceAccount object
 type ServiceAccountReconciler struct {
@@ -51,6 +58,10 @@ func (r *ServiceAccountReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	serviceAccount := &corev1.ServiceAccount{}
 	err := r.Get(ctx, req.NamespacedName, serviceAccount)
 	if err != nil {
+		if apierrs.IsNotFound(err) {
+			// ServiceAccount was deleted after the event was queued - nothing to do.
+			return ctrl.Result{}, nil
+		}
 		// Error reading the object - requeue the request.
 		log.Error(err, "Failed to get ServiceAccount")
 		return ctrl.Result{}, err
@@ -59,6 +70,12 @@ func (r *ServiceAccountReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 	// Not a managed SA
 	ns, err := utils.FetchNamespace(ctx, r.Client, serviceAccount.GetNamespace())
 	if err != nil {
+		if apierrs.IsNotFound(err) {
+			// The ServiceAccount exists but its namespace is not yet in the
+			// informer cache. Retry shortly; this resolves once the cache
+			// catches up, or stops once the SA disappears with its namespace.
+			return ctrl.Result{RequeueAfter: namespaceCacheRetryDelay}, nil
+		}
 		return ctrl.Result{}, fmt.Errorf("failed to fetch namespace: %w", err)
 	}
 	if !utils.IsServiceAccountManaged(r.Config, ns, serviceAccount) {
@@ -95,39 +112,35 @@ func (r *ServiceAccountReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *ServiceAccountReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	ctx := context.TODO()
 	return ctrl.NewControllerManagedBy(mgr).
 		Named("ServiceAccountController").
 		For(&corev1.ServiceAccount{}).
 		WithOptions(controller.Options{MaxConcurrentReconciles: r.Config.MaxConcurrentReconciles}).
-		WithEventFilter(predicate.Funcs{
-			CreateFunc: func(e event.CreateEvent) bool {
-				ns, err := utils.FetchNamespace(ctx, r.Client, e.Object.GetNamespace())
-				if err != nil {
-					return false
-				}
-				return utils.IsServiceAccountManaged(r.Config, ns, e.Object)
-			},
-			UpdateFunc: func(e event.UpdateEvent) bool {
-				ns, err := utils.FetchNamespace(ctx, r.Client, e.ObjectNew.GetNamespace())
-				if err != nil {
-					return false
-				}
-				return utils.IsServiceAccountManaged(r.Config, ns, e.ObjectNew)
-			},
-			GenericFunc: func(e event.GenericEvent) bool {
-				ns, err := utils.FetchNamespace(ctx, r.Client, e.Object.GetNamespace())
-				if err != nil {
-					return false
-				}
-				return utils.IsServiceAccountManaged(r.Config, ns, e.Object)
-			},
-			// Ignore Deletion events
-			DeleteFunc: func(e event.DeleteEvent) bool {
-				return false
-			},
-		}).
+		WithEventFilter(r.managedPredicate()).
 		Complete(r)
+}
+
+// managedPredicate filters events down to ServiceAccounts this controller
+// manages. When the namespace lookup fails (e.g. a brand-new namespace not
+// yet in the informer cache), it fails open so Reconcile can re-check with
+// proper error handling instead of dropping the event permanently.
+func (r *ServiceAccountReconciler) managedPredicate() predicate.Funcs {
+	shouldProcess := func(obj client.Object) bool {
+		ns, err := utils.FetchNamespace(context.Background(), r.Client, obj.GetNamespace())
+		if err != nil {
+			log.Log.V(1).Info("failed to fetch namespace in predicate, processing event anyway",
+				"namespace", obj.GetNamespace(), "reason", err.Error())
+			return true
+		}
+		return utils.IsServiceAccountManaged(r.Config, ns, obj)
+	}
+	return predicate.Funcs{
+		CreateFunc:  func(e event.CreateEvent) bool { return shouldProcess(e.Object) },
+		UpdateFunc:  func(e event.UpdateEvent) bool { return shouldProcess(e.ObjectNew) },
+		GenericFunc: func(e event.GenericEvent) bool { return shouldProcess(e.Object) },
+		// Ignore Deletion events
+		DeleteFunc: func(e event.DeleteEvent) bool { return false },
+	}
 }
 
 // Check if service account contains imagePullSecret with name equal to secretName

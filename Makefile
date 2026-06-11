@@ -166,7 +166,7 @@ KO = $(LOCALBIN)/ko-$(KO_VERSION)
 
 ## Tool Versions
 # renovate: datasource=github-releases depName=helm/helm
-HELM_VERSION ?= v4.1.4
+HELM_VERSION ?= v4.2.0
 # renovate: datasource=github-releases depName=kubernetes-sigs/controller-tools
 CONTROLLER_TOOLS_VERSION ?= v0.20.1
 
@@ -182,7 +182,7 @@ GOLANGCI_LINT_VERSION ?= v2.11.4
 KIND_VERSION ?= v0.32.0
 
 # renovate: datasource=github-releases depName=kyverno/chainsaw
-CHAINSAW_VERSION ?= v0.2.14
+CHAINSAW_VERSION ?= v0.2.15
 
 # renovate: datasource=github-releases depName=ko-build/ko
 KO_VERSION ?= v0.18.1

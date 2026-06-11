@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -47,6 +48,23 @@ type SecretReconciler struct {
 func (r *SecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
+	// Re-check the namespace here because the predicates fail open on
+	// namespace lookup errors. Without this, a cache hiccup could lead to
+	// patching secrets in excluded or terminating namespaces.
+	ns, err := utils.FetchNamespace(ctx, r.Client, req.Namespace)
+	if err != nil {
+		if apierrs.IsNotFound(err) {
+			// Namespace is gone (e.g. event queued during namespace deletion).
+			// The SA controller ensures secrets in new namespaces, so there is
+			// nothing left to do here.
+			return ctrl.Result{}, nil
+		}
+		return ctrl.Result{}, fmt.Errorf("failed to fetch namespace: %w", err)
+	}
+	if utils.IsNamespaceExcluded(r.Config, ns) || !ns.DeletionTimestamp.IsZero() {
+		return ctrl.Result{}, nil
+	}
+
 	log.Info("Reconciling imagePullSecret in " + req.Namespace)
 	doPatch := false
 	if didPatch, err := utils.ReconcileImagePullSecret(ctx, r.Client, r.Config, req.Name, req.Namespace); err != nil {
@@ -72,40 +90,7 @@ func (r *SecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Named("SecretController").
 		For(&corev1.Secret{}).
 		WithOptions(controller.Options{MaxConcurrentReconciles: r.Config.MaxConcurrentReconciles}).
-		WithEventFilter(predicate.Funcs{
-			CreateFunc: func(e event.CreateEvent) bool {
-				ns, err := utils.FetchNamespace(ctx, r.Client, e.Object.GetNamespace())
-				if err != nil {
-					return false
-				}
-				return utils.IsManagedSecret(r.Config, ns, e.Object)
-			},
-			UpdateFunc: func(e event.UpdateEvent) bool {
-				ns, err := utils.FetchNamespace(ctx, r.Client, e.ObjectNew.GetNamespace())
-				if err != nil {
-					return false
-				}
-				return utils.IsManagedSecret(r.Config, ns, e.ObjectNew)
-			},
-			GenericFunc: func(e event.GenericEvent) bool {
-				ns, err := utils.FetchNamespace(ctx, r.Client, e.Object.GetNamespace())
-				if err != nil {
-					return false
-				}
-				return utils.IsManagedSecret(r.Config, ns, e.Object)
-			},
-			DeleteFunc: func(e event.DeleteEvent) bool {
-				ns, err := utils.FetchNamespace(ctx, r.Client, e.Object.GetNamespace())
-				if err != nil {
-					return false
-				}
-				if !ns.DeletionTimestamp.IsZero() {
-					return false
-				}
-
-				return utils.IsManagedSecret(r.Config, ns, e.Object)
-			},
-		})
+		WithEventFilter(r.managedPredicate())
 
 	// If DockerConfigJSONPath is defined
 	if r.Config.DockerConfigJSONPath != "" && r.Config.FeatureWatchDockerConfigJSONPath {
@@ -150,4 +135,37 @@ func (r *SecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 
 	return builder.Complete(r)
+}
+
+// managedPredicate filters events down to secrets this controller manages.
+// When the namespace lookup fails (e.g. a namespace not yet in the informer
+// cache), it fails open so Reconcile can re-check with proper error handling
+// instead of dropping the event permanently.
+func (r *SecretReconciler) managedPredicate() predicate.Funcs {
+	shouldProcess := func(obj client.Object) bool {
+		ns, err := utils.FetchNamespace(context.Background(), r.Client, obj.GetNamespace())
+		if err != nil {
+			log.Log.V(1).Info("failed to fetch namespace in predicate, processing event anyway",
+				"namespace", obj.GetNamespace(), "reason", err.Error())
+			return true
+		}
+		return utils.IsManagedSecret(r.Config, ns, obj)
+	}
+	return predicate.Funcs{
+		CreateFunc:  func(e event.CreateEvent) bool { return shouldProcess(e.Object) },
+		UpdateFunc:  func(e event.UpdateEvent) bool { return shouldProcess(e.ObjectNew) },
+		GenericFunc: func(e event.GenericEvent) bool { return shouldProcess(e.Object) },
+		DeleteFunc: func(e event.DeleteEvent) bool {
+			ns, err := utils.FetchNamespace(context.Background(), r.Client, e.Object.GetNamespace())
+			if err != nil {
+				// Fail open; Reconcile no-ops if the namespace is gone.
+				return true
+			}
+			if !ns.DeletionTimestamp.IsZero() {
+				// Do not recreate secrets in terminating namespaces.
+				return false
+			}
+			return utils.IsManagedSecret(r.Config, ns, e.Object)
+		},
+	}
 }

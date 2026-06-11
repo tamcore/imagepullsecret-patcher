@@ -19,6 +19,7 @@ limitations under the License.
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 
 	env "github.com/caitlinelfring/go-env-default"
@@ -115,7 +116,10 @@ func NewConfig(opts ...ConfigOption) (*Config, error) {
 		return nil, fmt.Errorf("neither CONFIG_DOCKERCONFIGJSON nor CONFIG_DOCKERCONFIGJSONPATH defined")
 	}
 	if c.DockerConfigJSON != "" && c.DockerConfigJSONPath != "" {
-		return nil, fmt.Errorf("cannot specify both CONFIG_DOCKERCONFIGJSON (%s) and CONFIG_DOCKERCONFIGJSONPATH (%s)", c.DockerConfigJSON, c.DockerConfigJSONPath)
+		return nil, fmt.Errorf("cannot specify both CONFIG_DOCKERCONFIGJSON and CONFIG_DOCKERCONFIGJSONPATH")
+	}
+	if c.DockerConfigJSON != "" && !json.Valid([]byte(c.DockerConfigJSON)) {
+		return nil, fmt.Errorf("CONFIG_DOCKERCONFIGJSON does not contain valid JSON")
 	}
 
 	return c, nil

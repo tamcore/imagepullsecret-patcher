@@ -35,6 +35,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
@@ -78,7 +79,7 @@ var _ = Describe("ServiceAccount Controller", func() {
 		}
 
 		It("should successfully reconcile the resource", func() {
-			namespace, serviceAccount, serviceAccountNN, secretNN := makeObjects("testns-1", "default", cfg.SecretName)
+			namespace, serviceAccount, serviceAccountNN, secretNN := makeObjects("testns-1", saDefault, cfg.SecretName)
 
 			By("Creating the Namespace to perform the tests")
 			Expect(k8sClient.Create(ctx, namespace.DeepCopy())).Should(Succeed())
@@ -190,15 +191,38 @@ var _ = Describe("ServiceAccount Controller", func() {
 			Expect(err).To(Not(HaveOccurred()))
 		})
 
+		It("should ignore a ServiceAccount that no longer exists", func() {
+			_, _, serviceAccountNN, secretNN := makeObjects("testns-deleted", "ghost", cfg.SecretName)
+
+			By("Reconciling a ServiceAccount that was never created")
+			serviceAccountReconciler := &ServiceAccountReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+				Config: cfg,
+			}
+			result, err := serviceAccountReconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: serviceAccountNN,
+			})
+
+			By("Expecting no error and no requeue, as NotFound must be ignored")
+			Expect(err).To(Not(HaveOccurred()))
+			Expect(result).To(Equal(reconcile.Result{}))
+
+			By("Checking that no Secret was created")
+			foundSecret := &corev1.Secret{}
+			err = k8sClient.Get(ctx, secretNN, foundSecret)
+			Expect(err).To(HaveOccurred())
+		})
+
 		It("should not reconcile the resource", func() {
-			namespace, serviceAccount, serviceAccountNN, secretNN := makeObjects("testns-2", "default", cfg.SecretName)
+			namespace, serviceAccount, serviceAccountNN, secretNN := makeObjects("testns-2", saDefault, cfg.SecretName)
 
 			By("Creating the Namespace to perform the tests")
 			Expect(k8sClient.Create(ctx, namespace.DeepCopy())).Should(Succeed())
 
 			By("Creating the ServiceAccount to reconcile")
 			serviceAccount.Annotations = map[string]string{
-				cfg.ExcludeAnnotation: "true",
+				cfg.ExcludeAnnotation: annotationTrue,
 			}
 			Expect(k8sClient.Create(ctx, serviceAccount.DeepCopy())).Should(Succeed())
 
@@ -237,7 +261,7 @@ var _ = Describe("ServiceAccount Controller", func() {
 		}
 
 		It("should adopt the pre-existing secret and add managed-by labels", func() {
-			namespace, serviceAccount, serviceAccountNN, secretNN := makeObjects("testns-upgrade", "default", cfg.SecretName)
+			namespace, serviceAccount, serviceAccountNN, secretNN := makeObjects("testns-upgrade", saDefault, cfg.SecretName)
 
 			oldSecretData := `{"auth":{"old.example.com":{}}}`
 			preExistingSecret := &corev1.Secret{
@@ -316,6 +340,69 @@ var _ = Describe("ServiceAccount Controller", func() {
 				NamespacedName: serviceAccountNN,
 			})
 			Expect(err).NotTo(HaveOccurred())
+		})
+	})
+
+	Context("When the namespace is not yet visible in the cache", func() {
+		ctx := context.Background()
+		cfg, err := config.NewConfig(
+			config.WithDockerConfigJSON(imagePullSecretData),
+			config.WithSecretNamespace("kube-system"),
+		)
+		if err != nil {
+			panic(err)
+		}
+
+		newFakeClient := func(objs ...client.Object) client.Client {
+			scheme := kruntime.NewScheme()
+			Expect(clientgoscheme.AddToScheme(scheme)).NotTo(HaveOccurred())
+			return fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).Build()
+		}
+
+		It("should requeue instead of dropping the ServiceAccount", func() {
+			serviceAccount := &corev1.ServiceAccount{
+				ObjectMeta: metav1.ObjectMeta{Name: saDefault, Namespace: "ns-not-in-cache"},
+			}
+			c := newFakeClient(serviceAccount)
+			reconciler := &ServiceAccountReconciler{Client: c, Scheme: c.Scheme(), Config: cfg}
+
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: saDefault, Namespace: "ns-not-in-cache"},
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(Equal(namespaceCacheRetryDelay))
+		})
+
+		It("should fail open in predicates so Reconcile can decide", func() {
+			c := newFakeClient(
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "sa-predns-managed"}},
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+					Name:        "sa-predns-excluded",
+					Annotations: map[string]string{cfg.ExcludeAnnotation: annotationTrue},
+				}},
+			)
+			reconciler := &ServiceAccountReconciler{Client: c, Scheme: c.Scheme(), Config: cfg}
+			pred := reconciler.managedPredicate()
+
+			saIn := func(namespace string) *corev1.ServiceAccount {
+				return &corev1.ServiceAccount{
+					ObjectMeta: metav1.ObjectMeta{Name: saDefault, Namespace: namespace},
+				}
+			}
+
+			By("processing ServiceAccounts in managed namespaces")
+			Expect(pred.Create(event.CreateEvent{Object: saIn("sa-predns-managed")})).To(BeTrue())
+			Expect(pred.Update(event.UpdateEvent{ObjectNew: saIn("sa-predns-managed")})).To(BeTrue())
+
+			By("dropping ServiceAccounts in excluded namespaces")
+			Expect(pred.Create(event.CreateEvent{Object: saIn("sa-predns-excluded")})).To(BeFalse())
+
+			By("failing open when the namespace lookup fails")
+			Expect(pred.Create(event.CreateEvent{Object: saIn("sa-predns-missing")})).To(BeTrue())
+
+			By("still ignoring delete events")
+			Expect(pred.Delete(event.DeleteEvent{Object: saIn("sa-predns-managed")})).To(BeFalse())
 		})
 	})
 })
