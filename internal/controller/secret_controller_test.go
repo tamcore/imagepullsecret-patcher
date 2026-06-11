@@ -17,16 +17,164 @@ limitations under the License.
 package controller
 
 import (
+	"context"
+
 	. "github.com/onsi/ginkgo/v2"
+	. "github.com/onsi/gomega"
+
+	"github.com/tamcore/imagepullsecret-patcher/internal/config"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	kruntime "k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/event"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+)
+
+const (
+	saDefault        = "default"
+	annotationTrue   = "true"
+	secretNsManaged  = "secretns-managed"
+	secretNsExcluded = "secretns-excluded"
 )
 
 var _ = Describe("Secret Controller", func() {
-	Context("When reconciling a resource", func() {
+	ctx := context.Background()
+	cfg, err := config.NewConfig(
+		config.WithDockerConfigJSON(imagePullSecretData),
+		config.WithSecretNamespace("kube-system"),
+	)
+	if err != nil {
+		panic(err)
+	}
 
-		It("should successfully reconcile the resource", func() {
+	newTestScheme := func() *kruntime.Scheme {
+		scheme := kruntime.NewScheme()
+		Expect(clientgoscheme.AddToScheme(scheme)).NotTo(HaveOccurred())
+		return scheme
+	}
 
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
+	Context("When reconciling a Secret", func() {
+		It("should recreate the managed secret in a managed namespace", func() {
+			scheme := newTestScheme()
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: secretNsManaged}},
+			).Build()
+			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg}
+
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: cfg.SecretName, Namespace: secretNsManaged},
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal(reconcile.Result{}))
+			foundSecret := &corev1.Secret{}
+			Expect(c.Get(ctx, types.NamespacedName{Name: cfg.SecretName, Namespace: secretNsManaged}, foundSecret)).To(Succeed())
+			Expect(string(foundSecret.Data[corev1.DockerConfigJsonKey])).To(Equal(imagePullSecretData))
+		})
+
+		It("should skip reconciliation for excluded namespaces", func() {
+			scheme := newTestScheme()
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+					Name:        secretNsExcluded,
+					Annotations: map[string]string{cfg.ExcludeAnnotation: annotationTrue},
+				}},
+			).Build()
+			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg}
+
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: cfg.SecretName, Namespace: secretNsExcluded},
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal(reconcile.Result{}))
+			foundSecret := &corev1.Secret{}
+			Expect(c.Get(ctx, types.NamespacedName{Name: cfg.SecretName, Namespace: secretNsExcluded}, foundSecret)).NotTo(Succeed())
+		})
+
+		It("should return cleanly when the namespace no longer exists", func() {
+			scheme := newTestScheme()
+			c := fake.NewClientBuilder().WithScheme(scheme).Build()
+			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg}
+
+			result, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: cfg.SecretName, Namespace: "secretns-gone"},
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(Equal(reconcile.Result{}))
+		})
+	})
+
+	Context("When filtering events with managedPredicate", func() {
+		managedSecret := func(namespace string) *corev1.Secret {
+			return &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        cfg.SecretName,
+					Namespace:   namespace,
+					Annotations: map[string]string{config.AnnotationManagedBy: config.AnnotationAppName},
+				},
+			}
+		}
+
+		It("should process managed secrets in managed namespaces", func() {
+			scheme := newTestScheme()
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "predns-managed"}},
+			).Build()
+			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg}
+
+			pred := reconciler.managedPredicate()
+
+			Expect(pred.Create(event.CreateEvent{Object: managedSecret("predns-managed")})).To(BeTrue())
+			Expect(pred.Update(event.UpdateEvent{ObjectNew: managedSecret("predns-managed")})).To(BeTrue())
+			Expect(pred.Delete(event.DeleteEvent{Object: managedSecret("predns-managed")})).To(BeTrue())
+		})
+
+		It("should drop events in excluded namespaces", func() {
+			scheme := newTestScheme()
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+					Name:        "predns-excluded",
+					Annotations: map[string]string{cfg.ExcludeAnnotation: annotationTrue},
+				}},
+			).Build()
+			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg}
+
+			pred := reconciler.managedPredicate()
+
+			Expect(pred.Create(event.CreateEvent{Object: managedSecret("predns-excluded")})).To(BeFalse())
+		})
+
+		It("should fail open when the namespace lookup fails", func() {
+			scheme := newTestScheme()
+			c := fake.NewClientBuilder().WithScheme(scheme).Build()
+			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg}
+
+			pred := reconciler.managedPredicate()
+
+			Expect(pred.Create(event.CreateEvent{Object: managedSecret("predns-missing")})).To(BeTrue())
+			Expect(pred.Delete(event.DeleteEvent{Object: managedSecret("predns-missing")})).To(BeTrue())
+		})
+
+		It("should drop delete events for terminating namespaces", func() {
+			scheme := newTestScheme()
+			now := metav1.Now()
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+					Name:              "predns-terminating",
+					DeletionTimestamp: &now,
+					Finalizers:        []string{"kubernetes"},
+				}},
+			).Build()
+			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg}
+
+			pred := reconciler.managedPredicate()
+
+			Expect(pred.Delete(event.DeleteEvent{Object: managedSecret("predns-terminating")})).To(BeFalse())
 		})
 	})
 })
