@@ -48,6 +48,13 @@ type SecretReconciler struct {
 func (r *SecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
+	// Only the managed imagePullSecret itself is reconciled here. Requests for
+	// other secrets (e.g. annotated ones, or channel-sourced events) must not be
+	// conflated with the secret named in the configuration.
+	if req.Name != r.Config.SecretName {
+		return ctrl.Result{}, nil
+	}
+
 	// Re-check the namespace here because the predicates fail open on
 	// namespace lookup errors. Without this, a cache hiccup could lead to
 	// patching secrets in excluded or terminating namespaces.
@@ -67,7 +74,7 @@ func (r *SecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 	log.Info("Reconciling imagePullSecret in " + req.Namespace)
 	doPatch := false
-	if didPatch, err := utils.ReconcileImagePullSecret(ctx, r.Client, r.Config, req.Name, req.Namespace); err != nil {
+	if didPatch, err := utils.ReconcileImagePullSecret(ctx, r.Client, r.Config, req.Namespace); err != nil {
 		return ctrl.Result{}, fmt.Errorf("Failed to reconcile imagePullSecret in Namespace '"+req.Namespace+"': %w", err)
 	} else {
 		doPatch = didPatch

@@ -28,6 +28,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -560,6 +561,137 @@ func Test_GetDockerConfigJSON(t *testing.T) {
 			}
 			if got != tt.want {
 				t.Errorf("GetDockerConfigJSON() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// --- ReconcileImagePullSecret tests ---
+// NOTE: keep these at the end of the file to minimize merge conflicts.
+
+const (
+	secretNamespaceTest    = "kube-system"
+	reconcileDockerCfgJSON = `{"auths":{"reconcile.example.com":{"auth":"dGVzdDp0ZXN0"}}}`
+)
+
+func newReconcileTestConfig(t *testing.T) *config.Config {
+	t.Helper()
+	cfg, err := config.NewConfig(
+		config.WithDockerConfigJSON(reconcileDockerCfgJSON),
+		config.WithSecretNamespace(secretNamespaceTest),
+	)
+	if err != nil {
+		t.Fatalf("failed to create config: %v", err)
+	}
+	return cfg
+}
+
+func newFakeClient(t *testing.T, objs ...client.Object) client.Client {
+	t.Helper()
+	scheme := kruntime.NewScheme()
+	if err := clientgoscheme.AddToScheme(scheme); err != nil {
+		t.Fatalf("failed to build scheme: %v", err)
+	}
+	return fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithObjects(objs...).
+		Build()
+}
+
+func desiredSecretFixture(t *testing.T, cfg *config.Config, mutate func(*corev1.Secret)) *corev1.Secret {
+	t.Helper()
+	secret, err := ConstructImagePullSecret(cfg, nsDefault)
+	if err != nil {
+		t.Fatalf("failed to construct imagePullSecret: %v", err)
+	}
+	if mutate != nil {
+		mutate(secret)
+	}
+	return secret
+}
+
+func Test_ReconcileImagePullSecret(t *testing.T) {
+	tests := []struct {
+		name        string
+		existing    func(t *testing.T, cfg *config.Config) *corev1.Secret
+		wantChanged bool
+		assert      func(t *testing.T, cfg *config.Config, got *corev1.Secret)
+	}{
+		{
+			name:        "creates the managed secret when absent",
+			existing:    nil,
+			wantChanged: true,
+			assert: func(t *testing.T, cfg *config.Config, got *corev1.Secret) {
+				if got.Name != cfg.SecretName {
+					t.Errorf("secret name = %q, want %q", got.Name, cfg.SecretName)
+				}
+				if got.Type != corev1.SecretTypeDockerConfigJson {
+					t.Errorf("secret type = %q, want %q", got.Type, corev1.SecretTypeDockerConfigJson)
+				}
+				if data := string(got.Data[corev1.DockerConfigJsonKey]); data != reconcileDockerCfgJSON {
+					t.Errorf("secret data = %q, want %q", data, reconcileDockerCfgJSON)
+				}
+				if got.Labels[config.LabelManagedBy] != config.AnnotationAppName {
+					t.Errorf("managed-by label = %q, want %q", got.Labels[config.LabelManagedBy], config.AnnotationAppName)
+				}
+				if got.Annotations[config.AnnotationManagedBy] != config.AnnotationAppName {
+					t.Errorf("managed-by annotation = %q, want %q",
+						got.Annotations[config.AnnotationManagedBy], config.AnnotationAppName)
+				}
+			},
+		},
+		{
+			name: "patches the managed secret when data is stale",
+			existing: func(t *testing.T, cfg *config.Config) *corev1.Secret {
+				return desiredSecretFixture(t, cfg, func(s *corev1.Secret) {
+					s.Data = map[string][]byte{
+						corev1.DockerConfigJsonKey: []byte(`{"auths":{"stale.example.com":{}}}`),
+					}
+				})
+			},
+			wantChanged: true,
+			assert: func(t *testing.T, cfg *config.Config, got *corev1.Secret) {
+				if data := string(got.Data[corev1.DockerConfigJsonKey]); data != reconcileDockerCfgJSON {
+					t.Errorf("secret data = %q, want %q", data, reconcileDockerCfgJSON)
+				}
+			},
+		},
+		{
+			name: "returns false when the managed secret is up-to-date",
+			existing: func(t *testing.T, cfg *config.Config) *corev1.Secret {
+				return desiredSecretFixture(t, cfg, nil)
+			},
+			wantChanged: false,
+			assert:      nil,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Arrange
+			cfg := newReconcileTestConfig(t)
+			var objs []client.Object
+			if tt.existing != nil {
+				objs = append(objs, tt.existing(t, cfg))
+			}
+			k8sClient := newFakeClient(t, objs...)
+
+			// Act
+			changed, err := ReconcileImagePullSecret(context.Background(), k8sClient, cfg, nsDefault)
+
+			// Assert
+			if err != nil {
+				t.Fatalf("ReconcileImagePullSecret() error = %v", err)
+			}
+			if changed != tt.wantChanged {
+				t.Errorf("ReconcileImagePullSecret() changed = %v, want %v", changed, tt.wantChanged)
+			}
+			got := &corev1.Secret{}
+			if err := k8sClient.Get(context.Background(),
+				types.NamespacedName{Name: cfg.SecretName, Namespace: nsDefault}, got); err != nil {
+				t.Fatalf("failed to fetch reconciled Secret: %v", err)
+			}
+			if tt.assert != nil {
+				tt.assert(t, cfg, got)
 			}
 		})
 	}
