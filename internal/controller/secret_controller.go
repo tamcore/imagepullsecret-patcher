@@ -94,54 +94,23 @@ func (r *SecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 // SetupWithManager sets up the controller with the Manager.
 func (r *SecretReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	ctx := context.TODO()
-
 	builder := ctrl.NewControllerManagedBy(mgr).
 		Named("SecretController").
 		For(&corev1.Secret{}).
 		WithOptions(controller.Options{MaxConcurrentReconciles: r.Config.MaxConcurrentReconciles}).
 		WithEventFilter(r.managedPredicate())
 
-	// If DockerConfigJSONPath is defined
+	// If DockerConfigJSONPath is defined, watch it for changes through a
+	// manager runnable. The manager hands the watcher its own context (clean
+	// shutdown) and gates it behind leader election (only the leader polls).
 	if r.Config.DockerConfigJSONPath != "" && r.Config.FeatureWatchDockerConfigJSONPath {
-		// Create a GenericEvent channel, to pass reconcile events to the controller
-		secretRconciliationSourceChannel := make(chan event.GenericEvent)
-
-		// Set up a goroutine, which does a basic polling watch on DockerConfigJSONPath
-		go func(ctx context.Context) {
-			log.FromContext(ctx).Info("setting up watcher")
-
-			for {
-				// Wait, until DockerConfigJSONPath has changed
-				utils.WaitUntilFileChanges(r.Config.DockerConfigJSONPath)
-
-				// Fetch managed Secrets using the cached client (which respects the label selector).
-				// This avoids listing ALL secrets cluster-wide, reducing etcd load significantly.
-				secretList := &corev1.SecretList{}
-				if err := r.List(ctx, secretList, client.MatchingLabels{
-					config.LabelManagedBy: config.AnnotationAppName,
-				}); err != nil {
-					log.FromContext(ctx).Error(err, "error listing secrets")
-					continue
-				}
-
-				for _, d := range secretList.Items {
-					ns, err := utils.FetchNamespace(ctx, r.Client, d.GetNamespace())
-					if err != nil {
-						log.FromContext(ctx).Error(err, "error fetching namespace")
-						continue
-					}
-					// Filter for Secrets that are actually managed
-					if utils.IsManagedSecret(r.Config, ns, &d) {
-						// Send reconcile event for fetched Secret
-						secretRconciliationSourceChannel <- event.GenericEvent{Object: &d}
-					}
-				}
-			}
-		}(ctx)
+		events := make(chan event.GenericEvent, watcherEventBuffer)
+		if err := mgr.Add(&DockerConfigWatcher{Client: r.Client, Config: r.Config, Events: events}); err != nil {
+			return err
+		}
 
 		// Attach channel event source to controller
-		builder = builder.WatchesRawSource(source.Channel(secretRconciliationSourceChannel, &handler.EnqueueRequestForObject{}))
+		builder = builder.WatchesRawSource(source.Channel(events, &handler.EnqueueRequestForObject{}))
 	}
 
 	return builder.Complete(r)
