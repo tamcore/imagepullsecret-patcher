@@ -938,3 +938,33 @@ func Test_WaitUntilFileChanges(t *testing.T) {
 		}
 	})
 }
+
+func Test_ReconcileImagePullSecret_WrapsGetError(t *testing.T) {
+	// Arrange
+	sentinelErr := errors.New("sentinel get failure")
+	k8sClient := fake.NewClientBuilder().
+		WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				return sentinelErr
+			},
+		}).
+		Build()
+	cfg := &config.Config{
+		SecretName:       "image-pull-secret",
+		DockerConfigJSON: `{"auths":{}}`,
+	}
+
+	// Act
+	_, err := ReconcileImagePullSecret(context.Background(), k8sClient, nil, cfg, nsDefault)
+
+	// Assert
+	if err == nil {
+		t.Fatal("ReconcileImagePullSecret() expected error, got nil")
+	}
+	if !errors.Is(err, sentinelErr) {
+		t.Errorf("ReconcileImagePullSecret() error does not wrap sentinel error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "failed to fetch Secret") {
+		t.Errorf("ReconcileImagePullSecret() error = %v, want it to contain %q", err, "failed to fetch Secret")
+	}
+}

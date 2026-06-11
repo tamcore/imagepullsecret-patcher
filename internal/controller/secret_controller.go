@@ -75,10 +75,10 @@ func (r *SecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, nil
 	}
 
-	log.Info("Reconciling imagePullSecret in " + req.Namespace)
+	log.Info("Reconciling imagePullSecret", "namespace", req.Namespace)
 	doPatch := false
 	if didPatch, err := utils.ReconcileImagePullSecret(ctx, r.Client, r.APIReader, r.Config, req.Namespace); err != nil {
-		return ctrl.Result{}, fmt.Errorf("Failed to reconcile imagePullSecret in Namespace '"+req.Namespace+"': %w", err)
+		return ctrl.Result{}, fmt.Errorf("failed to reconcile imagePullSecret in namespace %q: %w", req.Namespace, err)
 	} else {
 		doPatch = didPatch
 	}
