@@ -392,17 +392,34 @@ func GetDockerConfigJSON(c *config.Config) (string, error) {
 	return string(b), nil
 }
 
-func WaitUntilFileChanges(filename string) {
-	initialStat, _ := os.Stat(filename)
+// fileWatchPollInterval is how often the watched file is polled for changes.
+const fileWatchPollInterval = 1 * time.Second
+
+// WaitUntilFileChanges blocks until the modification time of filename changes.
+// It returns nil once a change is detected, ctx.Err() when the context is
+// cancelled, or a wrapped error if the file cannot be stat'ed initially.
+func WaitUntilFileChanges(ctx context.Context, filename string) error {
+	initialStat, err := os.Stat(filename)
+	if err != nil {
+		return fmt.Errorf("failed to stat watched file %q: %w", filename, err)
+	}
+
+	ticker := time.NewTicker(fileWatchPollInterval)
+	defer ticker.Stop()
+
 	for {
-		time.Sleep(1 * time.Second)
-		stat, err := os.Stat(filename)
-		if err != nil {
-			fmt.Println("Error:", err)
-			continue
-		}
-		if stat.ModTime() != initialStat.ModTime() {
-			return
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			stat, err := os.Stat(filename)
+			if err != nil {
+				log.FromContext(ctx).Error(err, "failed to stat watched file", "path", filename)
+				continue
+			}
+			if !stat.ModTime().Equal(initialStat.ModTime()) {
+				return nil
+			}
 		}
 	}
 }

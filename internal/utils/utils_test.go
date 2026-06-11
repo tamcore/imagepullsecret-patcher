@@ -18,10 +18,12 @@ package utils
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
@@ -853,4 +855,86 @@ func Test_ReconcileImagePullSecret_AdoptsPreExistingSecrets(t *testing.T) {
 			}
 		})
 	}
+}
+
+func Test_WaitUntilFileChanges(t *testing.T) {
+	const (
+		modifyDelay  = 200 * time.Millisecond
+		cancelDelay  = 100 * time.Millisecond
+		returnWithin = 2 * time.Second
+		watchTimeout = 3 * time.Second
+	)
+
+	writeWatchedFile := func(t *testing.T) string {
+		t.Helper()
+		filename := filepath.Join(t.TempDir(), "dockerconfig.json")
+		if err := os.WriteFile(filename, []byte(`{"auths":{}}`), 0o600); err != nil {
+			t.Fatalf("failed to write watched file: %v", err)
+		}
+		return filename
+	}
+
+	t.Run("returns error promptly when file is missing instead of panicking", func(t *testing.T) {
+		// Arrange
+		missingFile := filepath.Join(t.TempDir(), "missing.json")
+
+		// Act
+		err := WaitUntilFileChanges(context.Background(), missingFile)
+
+		// Assert
+		if err == nil {
+			t.Fatal("WaitUntilFileChanges() expected error for missing file, got nil")
+		}
+	})
+
+	t.Run("returns ctx.Err() when context is cancelled and file never changes", func(t *testing.T) {
+		// Arrange
+		filename := writeWatchedFile(t)
+		ctx, cancel := context.WithCancel(context.Background())
+		timer := time.AfterFunc(cancelDelay, cancel)
+		defer timer.Stop()
+		defer cancel()
+
+		// Act
+		done := make(chan error, 1)
+		go func() { done <- WaitUntilFileChanges(ctx, filename) }()
+
+		// Assert
+		select {
+		case err := <-done:
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("WaitUntilFileChanges() error = %v, want context.Canceled", err)
+			}
+		case <-time.After(returnWithin):
+			t.Fatal("WaitUntilFileChanges() did not return within 2s after context cancellation")
+		}
+	})
+
+	t.Run("returns nil when file modification time changes", func(t *testing.T) {
+		// Arrange
+		filename := writeWatchedFile(t)
+		ctx, cancel := context.WithTimeout(context.Background(), watchTimeout)
+		defer cancel()
+
+		// Act
+		done := make(chan error, 1)
+		go func() { done <- WaitUntilFileChanges(ctx, filename) }()
+		bump := time.AfterFunc(modifyDelay, func() {
+			futureTime := time.Now().Add(time.Hour)
+			if err := os.Chtimes(filename, futureTime, futureTime); err != nil {
+				t.Errorf("failed to change file modification time: %v", err)
+			}
+		})
+		defer bump.Stop()
+
+		// Assert
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Fatalf("WaitUntilFileChanges() error = %v, want nil", err)
+			}
+		case <-time.After(watchTimeout):
+			t.Fatal("WaitUntilFileChanges() did not detect the file change in time")
+		}
+	})
 }
