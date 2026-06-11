@@ -5,8 +5,8 @@ go 1.26.4
 require (
 	github.com/KimMachineGun/automemlimit v0.7.5
 	github.com/caitlinelfring/go-env-default v1.1.0
-	github.com/onsi/ginkgo/v2 v2.28.3
-	github.com/onsi/gomega v1.40.0
+	github.com/onsi/ginkgo/v2 v2.29.0
+	github.com/onsi/gomega v1.41.0
 	go.uber.org/automaxprocs v1.6.0
 	k8s.io/api v0.36.1
 	k8s.io/apimachinery v0.36.1
