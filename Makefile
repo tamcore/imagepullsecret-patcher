@@ -185,7 +185,7 @@ KIND_VERSION ?= v0.32.0
 CHAINSAW_VERSION ?= v0.2.15
 
 # renovate: datasource=github-releases depName=ko-build/ko
-KO_VERSION ?= v0.19.0
+KO_VERSION ?= v0.19.1
 
 .PHONY: helm
 helm: $(HELM) ## Download helm locally if necessary.
