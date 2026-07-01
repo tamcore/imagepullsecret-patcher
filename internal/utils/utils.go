@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -56,7 +57,7 @@ func IsNamespaceExcluded(c *config.Config, namespace client.Object) bool {
 }
 
 func IsStringInList(find string, list string) bool {
-	for _, ex := range strings.Split(list, ",") {
+	for ex := range strings.SplitSeq(list, ",") {
 		match, _ := filepath.Match(ex, find)
 		if ex == find || match {
 			return true
@@ -277,9 +278,7 @@ func ReconcileImagePullSecret(ctx context.Context, k8sClient client.Client, apiR
 // entry was missing or differing.
 func enforceMapEntries(current map[string]string, desired map[string]string) (map[string]string, bool) {
 	merged := make(map[string]string, len(current)+len(desired))
-	for k, v := range current {
-		merged[k] = v
-	}
+	maps.Copy(merged, current)
 
 	changed := false
 	for k, v := range desired {
@@ -324,8 +323,8 @@ func adoptExistingSecret(ctx context.Context, k8sClient client.Client, apiReader
 // patchUnmanagedSecret patches an existing secret that is not in the label-filtered cache.
 // This handles upgrades from older versions that created secrets without the managed-by label.
 func patchUnmanagedSecret(ctx context.Context, k8sClient client.Client, desiredSecret *corev1.Secret) (bool, error) {
-	patchBytes, err := json.Marshal(map[string]interface{}{
-		"metadata": map[string]interface{}{
+	patchBytes, err := json.Marshal(map[string]any{
+		"metadata": map[string]any{
 			"labels":      desiredSecret.Labels,
 			"annotations": desiredSecret.Annotations,
 		},
