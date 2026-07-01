@@ -160,7 +160,7 @@ func (r *ServiceAccountReconciler) namespaceToServiceAccounts(ctx context.Contex
 	}
 
 	hasGlobEntry := false
-	for _, entry := range strings.Split(r.Config.ServiceAccounts, ",") {
+	for entry := range strings.SplitSeq(r.Config.ServiceAccounts, ",") {
 		entry = strings.TrimSpace(entry)
 		if entry == "" {
 			continue
