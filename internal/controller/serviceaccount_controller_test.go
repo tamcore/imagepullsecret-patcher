@@ -32,6 +32,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
@@ -210,6 +211,50 @@ var _ = Describe("ServiceAccount Controller", func() {
 				Namespace: unmanagedPod.GetNamespace(),
 			}, foundUnmanagedPod)
 			Expect(err).To(Not(HaveOccurred()))
+		})
+
+		It("should emit ImagePullSecretAttached and PodsCleanedUp Events", func() {
+			namespace, serviceAccount, serviceAccountNN, _ := makeObjects("testns-events", saDefault, cfg.SecretName)
+
+			By("Creating the Namespace and ServiceAccount")
+			Expect(k8sClient.Create(ctx, namespace.DeepCopy())).Should(Succeed())
+			Expect(k8sClient.Create(ctx, serviceAccount.DeepCopy())).Should(Succeed())
+
+			By("Creating a managed Pod stuck in ImagePullBackOff")
+			managedPod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{Name: "events-backoff", Namespace: serviceAccount.GetNamespace()},
+				Spec:       corev1.PodSpec{ServiceAccountName: serviceAccount.GetName()},
+				Status: corev1.PodStatus{
+					ContainerStatuses: []corev1.ContainerStatus{{
+						State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}},
+					}},
+				},
+			}
+			Expect(k8sClient.Create(ctx, managedPod)).Should(Succeed())
+
+			By("Reconciling with a recorder attached")
+			rec := record.NewFakeRecorder(10)
+			serviceAccountReconciler := &ServiceAccountReconciler{
+				Client:   k8sClient,
+				Scheme:   k8sClient.Scheme(),
+				Config:   cfg,
+				Recorder: rec,
+			}
+			_, err = serviceAccountReconciler.Reconcile(ctx, reconcile.Request{NamespacedName: serviceAccountNN})
+			Expect(err).To(Not(HaveOccurred()))
+
+			By("Collecting emitted Events")
+			var events []string
+			for draining := true; draining; {
+				select {
+				case e := <-rec.Events:
+					events = append(events, e)
+				default:
+					draining = false
+				}
+			}
+			Expect(events).To(ContainElement(ContainSubstring("ImagePullSecretAttached")))
+			Expect(events).To(ContainElement(ContainSubstring("PodsCleanedUp")))
 		})
 
 		It("should ignore a ServiceAccount that no longer exists", func() {

@@ -23,6 +23,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -44,6 +45,8 @@ type SecretReconciler struct {
 	APIReader client.Reader
 	Scheme    *runtime.Scheme
 	Config    *config.Config
+	// Recorder emits Events on reconciled objects. May be nil in tests.
+	Recorder record.EventRecorder
 }
 
 //+kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
@@ -76,20 +79,49 @@ func (r *SecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	log.Info("Reconciling imagePullSecret", "namespace", req.Namespace)
-	doPatch := false
-	if didPatch, err := utils.ReconcileImagePullSecret(ctx, r.Client, r.APIReader, r.Config, req.Namespace); err != nil {
+	sec, action, err := utils.ReconcileImagePullSecret(ctx, r.Client, r.APIReader, r.Config, req.Namespace)
+	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to reconcile imagePullSecret in namespace %q: %w", req.Namespace, err)
-	} else {
-		doPatch = didPatch
 	}
+	r.recordSecretAction(sec, action)
 
-	if doPatch && r.Config.FeatureDeletePods {
-		if err := utils.CleanupPodsForNamespace(ctx, r.Config, r.Client, req.Namespace); err != nil {
+	if action != utils.SecretUnchanged && r.Config.FeatureDeletePods {
+		deleted, err := utils.CleanupPodsForNamespace(ctx, r.Config, r.Client, req.Namespace)
+		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to cleanup Pods in unauthorized state: %w", err)
+		}
+		if deleted > 0 {
+			r.emitf(sec, corev1.EventTypeNormal, "PodsCleanedUp",
+				"Deleted %d Pod(s) stuck in an image pull failure", deleted)
 		}
 	}
 
 	return ctrl.Result{}, nil
+}
+
+// recordSecretAction emits the Event describing what ReconcileImagePullSecret
+// did to the managed secret. SecretUnchanged emits nothing (so periodic resync
+// stays quiet).
+func (r *SecretReconciler) recordSecretAction(sec *corev1.Secret, action utils.SecretAction) {
+	switch action {
+	case utils.SecretCreated:
+		r.emitf(sec, corev1.EventTypeNormal, "Created", "Created managed imagePullSecret %q", r.Config.SecretName)
+	case utils.SecretUpdated:
+		r.emitf(sec, corev1.EventTypeNormal, "Updated", "Updated managed imagePullSecret %q", r.Config.SecretName)
+	case utils.SecretAdopted:
+		r.emitf(sec, corev1.EventTypeNormal, "Adopted", "Adopted pre-existing imagePullSecret %q", r.Config.SecretName)
+	case utils.SecretRecreated:
+		r.emitf(sec, corev1.EventTypeWarning, "Recreated",
+			"Recreated imagePullSecret %q: pre-existing secret had an incompatible type", r.Config.SecretName)
+	}
+}
+
+// emitf records an Event, tolerating a nil Recorder (unit tests may omit it).
+func (r *SecretReconciler) emitf(obj runtime.Object, eventType, reason, messageFmt string, args ...any) {
+	if r.Recorder == nil || obj == nil {
+		return
+	}
+	r.Recorder.Eventf(obj, eventType, reason, messageFmt, args...)
 }
 
 // SetupWithManager sets up the controller with the Manager.
