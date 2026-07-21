@@ -39,6 +39,11 @@ spec:
             resource:
               apiVersion: v1
               kind: Event
+              # Events live in the namespace of their involvedObject; scope the
+              # lookup there so chainsaw doesn't match Events in its own
+              # ephemeral test namespace.
+              metadata:
+                namespace: managed-namespace
               type: Normal
               reason: ImagePullSecretAttached
               source:
@@ -52,6 +57,8 @@ spec:
             resource:
               apiVersion: v1
               kind: Event
+              metadata:
+                namespace: managed-namespace
               reason: Created
               source:
                 component: imagepullsecret-patcher
