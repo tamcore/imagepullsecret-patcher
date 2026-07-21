@@ -127,23 +127,27 @@ func FetchServiceAccount(ctx context.Context, client client.Client, namespace st
 
 //+kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch;delete
 
-func CleanupPodsForNamespace(ctx context.Context, c *config.Config, k8sClient client.Client, namespace string) error {
+// CleanupPodsForNamespace deletes pods stuck in an image pull failure whose
+// ServiceAccount is managed by this controller. It returns the number of pods
+// deleted so callers can decide whether to emit an Event.
+func CleanupPodsForNamespace(ctx context.Context, c *config.Config, k8sClient client.Client, namespace string) (int, error) {
 	ns, err := FetchNamespace(ctx, k8sClient, namespace)
 	if err != nil {
-		return fmt.Errorf("failed to fetch namespace: %w", err)
+		return 0, fmt.Errorf("failed to fetch namespace: %w", err)
 	}
 	if IsNamespaceExcluded(c, ns) {
-		return nil
+		return 0, nil
 	}
 
 	podList := &corev1.PodList{}
 	if err := k8sClient.List(ctx, podList, client.InNamespace(namespace)); err != nil {
-		return fmt.Errorf("failed to fetch pods: %w", err)
+		return 0, fmt.Errorf("failed to fetch pods: %w", err)
 	}
 
 	// Cache the managed-state per ServiceAccount so pods sharing one don't
 	// trigger repeated lookups.
 	saManaged := map[string]bool{}
+	deleted := 0
 	for _, pod := range podList.Items {
 		managed, known := saManaged[pod.Spec.ServiceAccountName]
 		if !known {
@@ -154,7 +158,7 @@ func CleanupPodsForNamespace(ctx context.Context, c *config.Config, k8sClient cl
 					saManaged[pod.Spec.ServiceAccountName] = false
 					continue
 				}
-				return fmt.Errorf("failed to fetch serviceAccount: %w", err)
+				return deleted, fmt.Errorf("failed to fetch serviceAccount: %w", err)
 			}
 			managed = IsServiceAccountManaged(c, ns, sa)
 			saManaged[pod.Spec.ServiceAccountName] = managed
@@ -163,36 +167,48 @@ func CleanupPodsForNamespace(ctx context.Context, c *config.Config, k8sClient cl
 			continue
 		}
 
-		if err := deletePodIfImagePullFailed(ctx, k8sClient, &pod); err != nil {
-			return err
+		didDelete, err := deletePodIfImagePullFailed(ctx, k8sClient, &pod)
+		if err != nil {
+			return deleted, err
+		}
+		if didDelete {
+			deleted++
 		}
 	}
 
-	return nil
+	return deleted, nil
 }
 
-func CleanupPodsForSA(ctx context.Context, k8sClient client.Client, namespace string, serviceAccount string) error {
+// CleanupPodsForSA deletes pods of the given ServiceAccount stuck in an image
+// pull failure. It returns the number of pods deleted.
+func CleanupPodsForSA(ctx context.Context, k8sClient client.Client, namespace string, serviceAccount string) (int, error) {
 	podList := &corev1.PodList{}
 	if err := k8sClient.List(ctx, podList, client.InNamespace(namespace)); err != nil {
-		return fmt.Errorf("failed to fetch pods: %w", err)
+		return 0, fmt.Errorf("failed to fetch pods: %w", err)
 	}
 
+	deleted := 0
 	for _, pod := range podList.Items {
 		if pod.Spec.ServiceAccountName != serviceAccount {
 			continue
 		}
 
-		if err := deletePodIfImagePullFailed(ctx, k8sClient, &pod); err != nil {
-			return err
+		didDelete, err := deletePodIfImagePullFailed(ctx, k8sClient, &pod)
+		if err != nil {
+			return deleted, err
+		}
+		if didDelete {
+			deleted++
 		}
 	}
 
-	return nil
+	return deleted, nil
 }
 
 // deletePodIfImagePullFailed deletes the pod once if any of its containers is
-// stuck in an image pull failure. An already-deleted pod is not an error.
-func deletePodIfImagePullFailed(ctx context.Context, k8sClient client.Client, pod *corev1.Pod) error {
+// stuck in an image pull failure. It reports whether the pod was deleted. An
+// already-deleted pod is not an error and still counts as deleted.
+func deletePodIfImagePullFailed(ctx context.Context, k8sClient client.Client, pod *corev1.Pod) (bool, error) {
 	for _, containerStatus := range pod.Status.ContainerStatuses {
 		if containerStatus.State.Waiting == nil {
 			continue
@@ -205,23 +221,39 @@ func deletePodIfImagePullFailed(ctx context.Context, k8sClient client.Client, po
 		log.FromContext(ctx).Info("Deleting Pod due to image pull failure",
 			"pod", pod.Name, "namespace", pod.Namespace, "reason", reason)
 		if err := k8sClient.Delete(ctx, pod); err != nil && !apierrs.IsNotFound(err) {
-			return fmt.Errorf("failed to delete Pod %q in namespace %q: %w", pod.Name, pod.Namespace, err)
+			return false, fmt.Errorf("failed to delete Pod %q in namespace %q: %w", pod.Name, pod.Namespace, err)
 		}
 		// The pod is deleted; checking the remaining containers would only
 		// trigger redundant deletes.
-		return nil
+		return true, nil
 	}
-	return nil
+	return false, nil
 }
 
-func ReconcileImagePullSecret(ctx context.Context, k8sClient client.Client, apiReader client.Reader, c *config.Config, namespace string) (bool, error) {
+// SecretAction reports what ReconcileImagePullSecret did to the managed secret,
+// so callers can emit an Event describing the exact transition.
+type SecretAction int
+
+const (
+	SecretUnchanged SecretAction = iota // no change was necessary
+	SecretCreated                       // the secret did not exist and was created
+	SecretUpdated                       // an existing managed secret was patched (data/labels/annotations)
+	SecretRecreated                     // a pre-existing secret with incompatible type was deleted and recreated
+	SecretAdopted                       // a pre-existing compatible secret was patched into managed state
+)
+
+// ReconcileImagePullSecret ensures the managed imagePullSecret exists and is
+// up-to-date in the given namespace. It returns the reconciled Secret (so the
+// caller has an object to attach an Event to) and a SecretAction describing what
+// happened.
+func ReconcileImagePullSecret(ctx context.Context, k8sClient client.Client, apiReader client.Reader, c *config.Config, namespace string) (*corev1.Secret, SecretAction, error) {
 	if apiReader == nil {
 		apiReader = k8sClient
 	}
 
 	desiredSecret, err := ConstructImagePullSecret(c, namespace)
 	if err != nil {
-		return false, fmt.Errorf("failed to construct imagePullSecret: %w", err)
+		return nil, SecretUnchanged, fmt.Errorf("failed to construct imagePullSecret: %w", err)
 	}
 
 	secret := &corev1.Secret{}
@@ -240,11 +272,11 @@ func ReconcileImagePullSecret(ctx context.Context, k8sClient client.Client, apiR
 					// installation without the managed-by label). Adopt it.
 					return adoptExistingSecret(ctx, k8sClient, apiReader, desiredSecret)
 				}
-				return false, fmt.Errorf("failed to create Secret: %w", err)
+				return nil, SecretUnchanged, fmt.Errorf("failed to create Secret: %w", err)
 			}
-			return true, nil
+			return desiredSecret, SecretCreated, nil
 		}
-		return false, fmt.Errorf("failed to fetch Secret: %w", err)
+		return nil, SecretUnchanged, fmt.Errorf("failed to fetch Secret: %w", err)
 	}
 
 	patchFrom := client.MergeFrom(secret.DeepCopy())
@@ -266,10 +298,11 @@ func ReconcileImagePullSecret(ctx context.Context, k8sClient client.Client, apiR
 
 	if doPatch {
 		if err = k8sClient.Patch(ctx, secret, patchFrom); err != nil {
-			return false, fmt.Errorf("failed to patch Secret %q in namespace %q: %w", desiredSecret.GetName(), desiredSecret.GetNamespace(), err)
+			return nil, SecretUnchanged, fmt.Errorf("failed to patch Secret %q in namespace %q: %w", desiredSecret.GetName(), desiredSecret.GetNamespace(), err)
 		}
+		return secret, SecretUpdated, nil
 	}
-	return doPatch, nil
+	return secret, SecretUnchanged, nil
 }
 
 // enforceMapEntries returns a copy of current with every key/value pair from
@@ -296,10 +329,10 @@ func enforceMapEntries(current map[string]string, desired map[string]string) (ma
 // the uncached apiReader. Secrets of the correct type are adopted in place via
 // merge patch. Secret.type is immutable in Kubernetes, so a secret of any
 // other type can never serve as imagePullSecret and is deleted and recreated.
-func adoptExistingSecret(ctx context.Context, k8sClient client.Client, apiReader client.Reader, desiredSecret *corev1.Secret) (bool, error) {
+func adoptExistingSecret(ctx context.Context, k8sClient client.Client, apiReader client.Reader, desiredSecret *corev1.Secret) (*corev1.Secret, SecretAction, error) {
 	live := &corev1.Secret{}
 	if err := apiReader.Get(ctx, client.ObjectKeyFromObject(desiredSecret), live); err != nil {
-		return false, fmt.Errorf("failed to fetch pre-existing Secret: %v", err)
+		return nil, SecretUnchanged, fmt.Errorf("failed to fetch pre-existing Secret: %v", err)
 	}
 
 	if live.Type == corev1.SecretTypeDockerConfigJson {
@@ -312,17 +345,18 @@ func adoptExistingSecret(ctx context.Context, k8sClient client.Client, apiReader
 		"type", string(live.Type),
 	)
 	if err := k8sClient.Delete(ctx, live, client.Preconditions{UID: &live.UID}); err != nil {
-		return false, fmt.Errorf("failed to delete pre-existing Secret with incompatible type: %v", err)
+		return nil, SecretUnchanged, fmt.Errorf("failed to delete pre-existing Secret with incompatible type: %v", err)
 	}
-	if err := k8sClient.Create(ctx, desiredSecret.DeepCopy()); err != nil {
-		return false, fmt.Errorf("failed to recreate Secret: %v", err)
+	recreated := desiredSecret.DeepCopy()
+	if err := k8sClient.Create(ctx, recreated); err != nil {
+		return nil, SecretUnchanged, fmt.Errorf("failed to recreate Secret: %v", err)
 	}
-	return true, nil
+	return recreated, SecretRecreated, nil
 }
 
 // patchUnmanagedSecret patches an existing secret that is not in the label-filtered cache.
 // This handles upgrades from older versions that created secrets without the managed-by label.
-func patchUnmanagedSecret(ctx context.Context, k8sClient client.Client, desiredSecret *corev1.Secret) (bool, error) {
+func patchUnmanagedSecret(ctx context.Context, k8sClient client.Client, desiredSecret *corev1.Secret) (*corev1.Secret, SecretAction, error) {
 	patchBytes, err := json.Marshal(map[string]any{
 		"metadata": map[string]any{
 			"labels":      desiredSecret.Labels,
@@ -331,7 +365,7 @@ func patchUnmanagedSecret(ctx context.Context, k8sClient client.Client, desiredS
 		"data": desiredSecret.Data,
 	})
 	if err != nil {
-		return false, fmt.Errorf("failed to marshal patch: %w", err)
+		return nil, SecretUnchanged, fmt.Errorf("failed to marshal patch: %w", err)
 	}
 	target := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{
@@ -340,9 +374,9 @@ func patchUnmanagedSecret(ctx context.Context, k8sClient client.Client, desiredS
 		},
 	}
 	if err := k8sClient.Patch(ctx, target, client.RawPatch(types.MergePatchType, patchBytes)); err != nil {
-		return false, fmt.Errorf("failed to patch existing Secret: %w", err)
+		return nil, SecretUnchanged, fmt.Errorf("failed to patch existing Secret: %w", err)
 	}
-	return true, nil
+	return target, SecretAdopted, nil
 }
 
 func ConstructImagePullSecret(c *config.Config, namespace string) (*corev1.Secret, error) {

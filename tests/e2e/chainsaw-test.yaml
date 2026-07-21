@@ -22,7 +22,7 @@ spec:
                 namespace: managed-namespace
                 labels:
                   app.kubernetes.io/managed-by: imagepullsecret-patcher
-        
+
         - assert:
             resource:
               apiVersion: v1
@@ -32,6 +32,40 @@ spec:
                 namespace: managed-namespace
               imagePullSecrets:
               - name: global-imagepullsecret
+
+    - name: "Check reconcile Events are emitted (managed-namespace)"
+      try:
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Event
+              # Events live in the namespace of their involvedObject; scope the
+              # lookup there so chainsaw doesn't match Events in its own
+              # ephemeral test namespace.
+              metadata:
+                namespace: managed-namespace
+              type: Normal
+              reason: ImagePullSecretAttached
+              source:
+                component: imagepullsecret-patcher
+              involvedObject:
+                kind: ServiceAccount
+                name: default
+                namespace: managed-namespace
+
+        - assert:
+            resource:
+              apiVersion: v1
+              kind: Event
+              metadata:
+                namespace: managed-namespace
+              reason: Created
+              source:
+                component: imagepullsecret-patcher
+              involvedObject:
+                kind: Secret
+                name: global-imagepullsecret
+                namespace: managed-namespace
 
     - name: "Check if imagePullSecrets are absent and not attached to the ServiceAccount (unmanaged-namespace)"
       try:
@@ -63,7 +97,7 @@ spec:
     #     #       metadata:
     #     #         name: global-imagepullsecret
     #     #         namespace: kube-unmanaged
-        
+
     #     - assert:
     #         resource:
     #           apiVersion: v1
@@ -75,4 +109,3 @@ spec:
     #         expect:
     #         - check:
     #             ($error != null): true
-    

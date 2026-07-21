@@ -398,7 +398,7 @@ func Test_CleanupPodsForNamespace(t *testing.T) {
 			c := newCountingClient(&deletes, &saGets, tt.deleteNotFound, tt.objects...)
 
 			// Act
-			err := CleanupPodsForNamespace(context.Background(), cfg, c, nsDefault)
+			deleted, err := CleanupPodsForNamespace(context.Background(), cfg, c, nsDefault)
 
 			// Assert
 			if (err != nil) != tt.wantErr {
@@ -406,6 +406,9 @@ func Test_CleanupPodsForNamespace(t *testing.T) {
 			}
 			if deletes != tt.wantDeletes {
 				t.Errorf("CleanupPodsForNamespace() deletes = %d, want %d", deletes, tt.wantDeletes)
+			}
+			if !tt.wantErr && deleted != tt.wantDeletes {
+				t.Errorf("CleanupPodsForNamespace() returned count = %d, want %d", deleted, tt.wantDeletes)
 			}
 			if saGets > tt.maxSAGets {
 				t.Errorf("CleanupPodsForNamespace() serviceaccount gets = %d, want at most %d", saGets, tt.maxSAGets)
@@ -428,7 +431,7 @@ func Test_CleanupPodsForNamespace(t *testing.T) {
 		)
 
 		// Act
-		err := CleanupPodsForNamespace(context.Background(), cfg, c, "kube-excluded")
+		deleted, err := CleanupPodsForNamespace(context.Background(), cfg, c, "kube-excluded")
 
 		// Assert
 		if err != nil {
@@ -436,6 +439,9 @@ func Test_CleanupPodsForNamespace(t *testing.T) {
 		}
 		if deletes != 0 {
 			t.Errorf("CleanupPodsForNamespace() deletes = %d, want 0", deletes)
+		}
+		if deleted != 0 {
+			t.Errorf("CleanupPodsForNamespace() returned count = %d, want 0", deleted)
 		}
 	})
 }
@@ -470,7 +476,7 @@ func Test_CleanupPodsForSA(t *testing.T) {
 			c := newCountingClient(&deletes, &saGets, tt.deleteNotFound, tt.objects...)
 
 			// Act
-			err := CleanupPodsForSA(context.Background(), c, nsDefault, nsDefault)
+			deleted, err := CleanupPodsForSA(context.Background(), c, nsDefault, nsDefault)
 
 			// Assert
 			if err != nil {
@@ -478,6 +484,9 @@ func Test_CleanupPodsForSA(t *testing.T) {
 			}
 			if deletes != tt.wantDeletes {
 				t.Errorf("CleanupPodsForSA() deletes = %d, want %d", deletes, tt.wantDeletes)
+			}
+			if deleted != tt.wantDeletes {
+				t.Errorf("CleanupPodsForSA() returned count = %d, want %d", deleted, tt.wantDeletes)
 			}
 		})
 	}
@@ -616,15 +625,15 @@ func desiredSecretFixture(t *testing.T, cfg *config.Config, mutate func(*corev1.
 
 func Test_ReconcileImagePullSecret(t *testing.T) {
 	tests := []struct {
-		name        string
-		existing    func(t *testing.T, cfg *config.Config) *corev1.Secret
-		wantChanged bool
-		assert      func(t *testing.T, cfg *config.Config, got *corev1.Secret)
+		name       string
+		existing   func(t *testing.T, cfg *config.Config) *corev1.Secret
+		wantAction SecretAction
+		assert     func(t *testing.T, cfg *config.Config, got *corev1.Secret)
 	}{
 		{
-			name:        "creates the managed secret when absent",
-			existing:    nil,
-			wantChanged: true,
+			name:       "creates the managed secret when absent",
+			existing:   nil,
+			wantAction: SecretCreated,
 			assert: func(t *testing.T, cfg *config.Config, got *corev1.Secret) {
 				if got.Name != cfg.SecretName {
 					t.Errorf("secret name = %q, want %q", got.Name, cfg.SecretName)
@@ -653,7 +662,7 @@ func Test_ReconcileImagePullSecret(t *testing.T) {
 					}
 				})
 			},
-			wantChanged: true,
+			wantAction: SecretUpdated,
 			assert: func(t *testing.T, cfg *config.Config, got *corev1.Secret) {
 				if data := string(got.Data[corev1.DockerConfigJsonKey]); data != reconcileDockerCfgJSON {
 					t.Errorf("secret data = %q, want %q", data, reconcileDockerCfgJSON)
@@ -661,12 +670,12 @@ func Test_ReconcileImagePullSecret(t *testing.T) {
 			},
 		},
 		{
-			name: "returns false when the managed secret is up-to-date",
+			name: "returns unchanged when the managed secret is up-to-date",
 			existing: func(t *testing.T, cfg *config.Config) *corev1.Secret {
 				return desiredSecretFixture(t, cfg, nil)
 			},
-			wantChanged: false,
-			assert:      nil,
+			wantAction: SecretUnchanged,
+			assert:     nil,
 		},
 		{
 			name: "preserves foreign annotations and skips patch when up-to-date",
@@ -675,7 +684,7 @@ func Test_ReconcileImagePullSecret(t *testing.T) {
 					s.Annotations[foreignAnnotationKey] = foreignAnnotationValue
 				})
 			},
-			wantChanged: false,
+			wantAction: SecretUnchanged,
 			assert: func(t *testing.T, cfg *config.Config, got *corev1.Secret) {
 				if got.Annotations[foreignAnnotationKey] != foreignAnnotationValue {
 					t.Errorf("foreign annotation = %q, want %q",
@@ -692,7 +701,7 @@ func Test_ReconcileImagePullSecret(t *testing.T) {
 					}
 				})
 			},
-			wantChanged: true,
+			wantAction: SecretUpdated,
 			assert: func(t *testing.T, cfg *config.Config, got *corev1.Secret) {
 				if got.Annotations[config.AnnotationManagedBy] != config.AnnotationAppName {
 					t.Errorf("managed-by annotation = %q, want %q",
@@ -711,7 +720,7 @@ func Test_ReconcileImagePullSecret(t *testing.T) {
 					s.Labels = nil
 				})
 			},
-			wantChanged: true,
+			wantAction: SecretUpdated,
 			assert: func(t *testing.T, cfg *config.Config, got *corev1.Secret) {
 				if got.Labels[config.LabelManagedBy] != config.AnnotationAppName {
 					t.Errorf("managed-by label = %q, want %q",
@@ -731,14 +740,19 @@ func Test_ReconcileImagePullSecret(t *testing.T) {
 			k8sClient := newFakeClient(t, objs...)
 
 			// Act (nil apiReader exercises the fallback to k8sClient)
-			changed, err := ReconcileImagePullSecret(context.Background(), k8sClient, nil, cfg, nsDefault)
+			sec, action, err := ReconcileImagePullSecret(context.Background(), k8sClient, nil, cfg, nsDefault)
 
 			// Assert
 			if err != nil {
 				t.Fatalf("ReconcileImagePullSecret() error = %v", err)
 			}
-			if changed != tt.wantChanged {
-				t.Errorf("ReconcileImagePullSecret() changed = %v, want %v", changed, tt.wantChanged)
+			if action != tt.wantAction {
+				t.Errorf("ReconcileImagePullSecret() action = %v, want %v", action, tt.wantAction)
+			}
+			// On any real transition the reconciled Secret is returned so the
+			// caller has an object to attach an Event to.
+			if tt.wantAction != SecretUnchanged && sec == nil {
+				t.Error("ReconcileImagePullSecret() returned nil Secret on a changing action")
 			}
 			got := &corev1.Secret{}
 			if err := k8sClient.Get(context.Background(),
@@ -762,16 +776,19 @@ func Test_ReconcileImagePullSecret_AdoptsPreExistingSecrets(t *testing.T) {
 		name         string
 		existingType corev1.SecretType
 		wantDeletes  int
+		wantAction   SecretAction
 	}{
 		{
 			name:         "adopts a compatible pre-existing secret via patch without deleting it",
 			existingType: corev1.SecretTypeDockerConfigJson,
 			wantDeletes:  0,
+			wantAction:   SecretAdopted,
 		},
 		{
 			name:         "deletes and recreates a pre-existing secret with incompatible type",
 			existingType: corev1.SecretTypeOpaque,
 			wantDeletes:  1,
+			wantAction:   SecretRecreated,
 		},
 	}
 	for _, tt := range tests {
@@ -818,14 +835,17 @@ func Test_ReconcileImagePullSecret_AdoptsPreExistingSecrets(t *testing.T) {
 			})
 
 			// Act
-			changed, err := ReconcileImagePullSecret(context.Background(), labelFilteredClient, rawClient, cfg, nsDefault)
+			sec, action, err := ReconcileImagePullSecret(context.Background(), labelFilteredClient, rawClient, cfg, nsDefault)
 
 			// Assert
 			if err != nil {
 				t.Fatalf("ReconcileImagePullSecret() error = %v", err)
 			}
-			if !changed {
-				t.Errorf("ReconcileImagePullSecret() changed = false, want true")
+			if action != tt.wantAction {
+				t.Errorf("ReconcileImagePullSecret() action = %v, want %v", action, tt.wantAction)
+			}
+			if sec == nil {
+				t.Error("ReconcileImagePullSecret() returned nil Secret, want a reconciled object")
 			}
 			if deleteCalls != tt.wantDeletes {
 				t.Errorf("delete calls = %d, want %d", deleteCalls, tt.wantDeletes)
@@ -955,7 +975,7 @@ func Test_ReconcileImagePullSecret_WrapsGetError(t *testing.T) {
 	}
 
 	// Act
-	_, err := ReconcileImagePullSecret(context.Background(), k8sClient, nil, cfg, nsDefault)
+	_, _, err := ReconcileImagePullSecret(context.Background(), k8sClient, nil, cfg, nsDefault)
 
 	// Assert
 	if err == nil {

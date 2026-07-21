@@ -29,6 +29,7 @@ import (
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -148,6 +149,94 @@ var _ = Describe("Secret Controller", func() {
 			Expect(after.ResourceVersion).To(Equal(before.ResourceVersion))
 			Expect(after.Data).To(Equal(map[string][]byte{"foo": []byte("bar")}))
 			Expect(after.Type).To(Equal(corev1.SecretTypeOpaque))
+		})
+	})
+
+	Context("When emitting Events on reconcile", func() {
+		// drainEvents collects every buffered Event string from a FakeRecorder
+		// without blocking. FakeRecorder formats each as "<Type> <Reason> <message>".
+		drainEvents := func(rec *record.FakeRecorder) []string {
+			var events []string
+			for {
+				select {
+				case e := <-rec.Events:
+					events = append(events, e)
+				default:
+					return events
+				}
+			}
+		}
+
+		It("should emit a Created Event when the managed secret is created", func() {
+			scheme := newTestScheme()
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: secretNsManaged}},
+			).Build()
+			rec := record.NewFakeRecorder(10)
+			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg, Recorder: rec}
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: cfg.SecretName, Namespace: secretNsManaged},
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(drainEvents(rec)).To(ContainElement(And(
+				ContainSubstring("Normal"),
+				ContainSubstring("Created"),
+			)))
+		})
+
+		It("should emit an Updated Event when stale secret data is corrected", func() {
+			scheme := newTestScheme()
+			staleSecret := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      cfg.SecretName,
+					Namespace: secretNsManaged,
+					Labels:    map[string]string{config.LabelManagedBy: config.AnnotationAppName},
+				},
+				Type: corev1.SecretTypeDockerConfigJson,
+				Data: map[string][]byte{corev1.DockerConfigJsonKey: []byte(`{"auths":{"stale":{}}}`)},
+			}
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: secretNsManaged}},
+				staleSecret,
+			).Build()
+			rec := record.NewFakeRecorder(10)
+			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg, Recorder: rec}
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: cfg.SecretName, Namespace: secretNsManaged},
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(drainEvents(rec)).To(ContainElement(ContainSubstring("Updated")))
+		})
+
+		It("should emit no Event when the managed secret is already up-to-date", func() {
+			scheme := newTestScheme()
+			upToDate := &corev1.Secret{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        cfg.SecretName,
+					Namespace:   secretNsManaged,
+					Labels:      map[string]string{config.LabelManagedBy: config.AnnotationAppName},
+					Annotations: map[string]string{config.AnnotationManagedBy: config.AnnotationAppName},
+				},
+				Type: corev1.SecretTypeDockerConfigJson,
+				Data: map[string][]byte{corev1.DockerConfigJsonKey: []byte(imagePullSecretData)},
+			}
+			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
+				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: secretNsManaged}},
+				upToDate,
+			).Build()
+			rec := record.NewFakeRecorder(10)
+			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg, Recorder: rec}
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: cfg.SecretName, Namespace: secretNsManaged},
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(drainEvents(rec)).To(BeEmpty())
 		})
 	})
 

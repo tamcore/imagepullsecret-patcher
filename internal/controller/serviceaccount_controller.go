@@ -27,6 +27,7 @@ import (
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlbuilder "sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -58,11 +59,14 @@ type ServiceAccountReconciler struct {
 	APIReader client.Reader
 	Scheme    *runtime.Scheme
 	Config    *config.Config
+	// Recorder emits Events on reconciled objects. May be nil in tests.
+	Recorder record.EventRecorder
 }
 
 //+kubebuilder:rbac:groups=core,resources=serviceaccounts,verbs=get;list;watch;update;patch
 //+kubebuilder:rbac:groups=core,resources=namespaces,verbs=get;list;watch
 //+kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 
 func (r *ServiceAccountReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
@@ -94,10 +98,15 @@ func (r *ServiceAccountReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, nil
 	}
 
-	// Ensure imagePullSecret exists before we attach it to the ServiceAccount
-	if _, err = utils.ReconcileImagePullSecret(ctx, r.Client, r.APIReader, r.Config, serviceAccount.GetNamespace()); err != nil {
+	// Ensure imagePullSecret exists before we attach it to the ServiceAccount.
+	// The SA controller can be the one that first creates the secret, so it
+	// records the secret Event too (the SecretReconciler would otherwise see an
+	// already-current secret and stay silent).
+	sec, action, err := utils.ReconcileImagePullSecret(ctx, r.Client, r.APIReader, r.Config, serviceAccount.GetNamespace())
+	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to reconcile imagePullSecret in namespace %q: %w", serviceAccount.GetNamespace(), err)
 	}
+	recordSecretAction(r.Recorder, r.Config.SecretName, sec, action)
 
 	patchFrom := client.MergeFrom(serviceAccount.DeepCopy())
 	patchedServiceAccount := r.getPatchedServiceAccount(serviceAccount.DeepCopy(), r.Config.SecretName)
@@ -109,13 +118,20 @@ func (r *ServiceAccountReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				serviceAccount.GetName(), serviceAccount.GetNamespace(), err)
 		}
 		log.Info("Attached ImagePullSecret to ServiceAccount", "serviceaccount", serviceAccount.GetName(), "namespace", serviceAccount.GetNamespace())
+		emitEvent(r.Recorder, serviceAccount, corev1.EventTypeNormal, "ImagePullSecretAttached",
+			"Attached imagePullSecret %q to ServiceAccount", r.Config.SecretName)
 
 		if r.Config.FeatureDeletePods {
 			// Run Pod cleanup only if we're freshly attaching the imagePullSecret to the ServiceAccount
-			if err = utils.CleanupPodsForSA(ctx, r.Client, serviceAccount.GetNamespace(), serviceAccount.GetName()); err != nil {
+			deleted, err := utils.CleanupPodsForSA(ctx, r.Client, serviceAccount.GetNamespace(), serviceAccount.GetName())
+			if err != nil {
 				return ctrl.Result{}, fmt.Errorf("failed to cleanup Pods in unauthorized state: %w", err)
 			}
 			log.Info("Cleaned up Pods belonging to ServiceAccount", "serviceaccount", serviceAccount.GetName(), "namespace", serviceAccount.GetNamespace())
+			if deleted > 0 {
+				emitEvent(r.Recorder, serviceAccount, corev1.EventTypeNormal, "PodsCleanedUp",
+					"Deleted %d Pod(s) stuck in an image pull failure", deleted)
+			}
 		}
 	}
 

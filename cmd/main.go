@@ -213,6 +213,10 @@ func main() {
 		APIReader: mgr.GetAPIReader(),
 		Scheme:    mgr.GetScheme(),
 		Config:    controllerConfig,
+		// The old (record) events API is sufficient here; the new events API
+		// would force an "action" verb we don't need. controller-runtime itself
+		// still exercises this call, suppressing the same deprecation.
+		Recorder: mgr.GetEventRecorderFor("imagepullsecret-patcher"), //nolint:staticcheck // old events API is intentional
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ServiceAccount")
 		os.Exit(1)
@@ -223,6 +227,7 @@ func main() {
 		APIReader: mgr.GetAPIReader(),
 		Scheme:    mgr.GetScheme(),
 		Config:    controllerConfig,
+		Recorder:  mgr.GetEventRecorderFor("imagepullsecret-patcher"), //nolint:staticcheck // old events API is intentional
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Secret")
 		os.Exit(1)

@@ -23,6 +23,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
@@ -44,6 +45,8 @@ type SecretReconciler struct {
 	APIReader client.Reader
 	Scheme    *runtime.Scheme
 	Config    *config.Config
+	// Recorder emits Events on reconciled objects. May be nil in tests.
+	Recorder record.EventRecorder
 }
 
 //+kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
@@ -76,16 +79,20 @@ func (r *SecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	log.Info("Reconciling imagePullSecret", "namespace", req.Namespace)
-	doPatch := false
-	if didPatch, err := utils.ReconcileImagePullSecret(ctx, r.Client, r.APIReader, r.Config, req.Namespace); err != nil {
+	sec, action, err := utils.ReconcileImagePullSecret(ctx, r.Client, r.APIReader, r.Config, req.Namespace)
+	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to reconcile imagePullSecret in namespace %q: %w", req.Namespace, err)
-	} else {
-		doPatch = didPatch
 	}
+	recordSecretAction(r.Recorder, r.Config.SecretName, sec, action)
 
-	if doPatch && r.Config.FeatureDeletePods {
-		if err := utils.CleanupPodsForNamespace(ctx, r.Config, r.Client, req.Namespace); err != nil {
+	if action != utils.SecretUnchanged && r.Config.FeatureDeletePods {
+		deleted, err := utils.CleanupPodsForNamespace(ctx, r.Config, r.Client, req.Namespace)
+		if err != nil {
 			return ctrl.Result{}, fmt.Errorf("failed to cleanup Pods in unauthorized state: %w", err)
+		}
+		if deleted > 0 {
+			emitEvent(r.Recorder, sec, corev1.EventTypeNormal, "PodsCleanedUp",
+				"Deleted %d Pod(s) stuck in an image pull failure", deleted)
 		}
 	}
 
