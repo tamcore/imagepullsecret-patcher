@@ -83,7 +83,7 @@ func (r *SecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to reconcile imagePullSecret in namespace %q: %w", req.Namespace, err)
 	}
-	r.recordSecretAction(sec, action)
+	recordSecretAction(r.Recorder, r.Config.SecretName, sec, action)
 
 	if action != utils.SecretUnchanged && r.Config.FeatureDeletePods {
 		deleted, err := utils.CleanupPodsForNamespace(ctx, r.Config, r.Client, req.Namespace)
@@ -91,37 +91,12 @@ func (r *SecretReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			return ctrl.Result{}, fmt.Errorf("failed to cleanup Pods in unauthorized state: %w", err)
 		}
 		if deleted > 0 {
-			r.emitf(sec, corev1.EventTypeNormal, "PodsCleanedUp",
+			emitEvent(r.Recorder, sec, corev1.EventTypeNormal, "PodsCleanedUp",
 				"Deleted %d Pod(s) stuck in an image pull failure", deleted)
 		}
 	}
 
 	return ctrl.Result{}, nil
-}
-
-// recordSecretAction emits the Event describing what ReconcileImagePullSecret
-// did to the managed secret. SecretUnchanged emits nothing (so periodic resync
-// stays quiet).
-func (r *SecretReconciler) recordSecretAction(sec *corev1.Secret, action utils.SecretAction) {
-	switch action {
-	case utils.SecretCreated:
-		r.emitf(sec, corev1.EventTypeNormal, "Created", "Created managed imagePullSecret %q", r.Config.SecretName)
-	case utils.SecretUpdated:
-		r.emitf(sec, corev1.EventTypeNormal, "Updated", "Updated managed imagePullSecret %q", r.Config.SecretName)
-	case utils.SecretAdopted:
-		r.emitf(sec, corev1.EventTypeNormal, "Adopted", "Adopted pre-existing imagePullSecret %q", r.Config.SecretName)
-	case utils.SecretRecreated:
-		r.emitf(sec, corev1.EventTypeWarning, "Recreated",
-			"Recreated imagePullSecret %q: pre-existing secret had an incompatible type", r.Config.SecretName)
-	}
-}
-
-// emitf records an Event, tolerating a nil Recorder (unit tests may omit it).
-func (r *SecretReconciler) emitf(obj runtime.Object, eventType, reason, messageFmt string, args ...any) {
-	if r.Recorder == nil || obj == nil {
-		return
-	}
-	r.Recorder.Eventf(obj, eventType, reason, messageFmt, args...)
 }
 
 // SetupWithManager sets up the controller with the Manager.

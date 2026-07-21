@@ -98,10 +98,15 @@ func (r *ServiceAccountReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 		return ctrl.Result{}, nil
 	}
 
-	// Ensure imagePullSecret exists before we attach it to the ServiceAccount
-	if _, _, err = utils.ReconcileImagePullSecret(ctx, r.Client, r.APIReader, r.Config, serviceAccount.GetNamespace()); err != nil {
+	// Ensure imagePullSecret exists before we attach it to the ServiceAccount.
+	// The SA controller can be the one that first creates the secret, so it
+	// records the secret Event too (the SecretReconciler would otherwise see an
+	// already-current secret and stay silent).
+	sec, action, err := utils.ReconcileImagePullSecret(ctx, r.Client, r.APIReader, r.Config, serviceAccount.GetNamespace())
+	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("failed to reconcile imagePullSecret in namespace %q: %w", serviceAccount.GetNamespace(), err)
 	}
+	recordSecretAction(r.Recorder, r.Config.SecretName, sec, action)
 
 	patchFrom := client.MergeFrom(serviceAccount.DeepCopy())
 	patchedServiceAccount := r.getPatchedServiceAccount(serviceAccount.DeepCopy(), r.Config.SecretName)
@@ -113,7 +118,7 @@ func (r *ServiceAccountReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 				serviceAccount.GetName(), serviceAccount.GetNamespace(), err)
 		}
 		log.Info("Attached ImagePullSecret to ServiceAccount", "serviceaccount", serviceAccount.GetName(), "namespace", serviceAccount.GetNamespace())
-		r.emitf(serviceAccount, corev1.EventTypeNormal, "ImagePullSecretAttached",
+		emitEvent(r.Recorder, serviceAccount, corev1.EventTypeNormal, "ImagePullSecretAttached",
 			"Attached imagePullSecret %q to ServiceAccount", r.Config.SecretName)
 
 		if r.Config.FeatureDeletePods {
@@ -124,21 +129,13 @@ func (r *ServiceAccountReconciler) Reconcile(ctx context.Context, req ctrl.Reque
 			}
 			log.Info("Cleaned up Pods belonging to ServiceAccount", "serviceaccount", serviceAccount.GetName(), "namespace", serviceAccount.GetNamespace())
 			if deleted > 0 {
-				r.emitf(serviceAccount, corev1.EventTypeNormal, "PodsCleanedUp",
+				emitEvent(r.Recorder, serviceAccount, corev1.EventTypeNormal, "PodsCleanedUp",
 					"Deleted %d Pod(s) stuck in an image pull failure", deleted)
 			}
 		}
 	}
 
 	return ctrl.Result{}, nil
-}
-
-// emitf records an Event, tolerating a nil Recorder (unit tests may omit it).
-func (r *ServiceAccountReconciler) emitf(obj runtime.Object, eventType, reason, messageFmt string, args ...any) {
-	if r.Recorder == nil || obj == nil {
-		return
-	}
-	r.Recorder.Eventf(obj, eventType, reason, messageFmt, args...)
 }
 
 // SetupWithManager sets up the controller with the Manager.
