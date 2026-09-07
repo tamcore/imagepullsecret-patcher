@@ -29,7 +29,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -368,10 +367,8 @@ func patchUnmanagedSecret(ctx context.Context, k8sClient client.Client, desiredS
 		return nil, SecretUnchanged, fmt.Errorf("failed to marshal patch: %w", err)
 	}
 	target := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      desiredSecret.Name,
-			Namespace: desiredSecret.Namespace,
-		},
+		Name:      desiredSecret.Name,
+		Namespace: desiredSecret.Namespace,
 	}
 	if err := k8sClient.Patch(ctx, target, client.RawPatch(types.MergePatchType, patchBytes)); err != nil {
 		return nil, SecretUnchanged, fmt.Errorf("failed to patch existing Secret: %w", err)
@@ -386,15 +383,13 @@ func ConstructImagePullSecret(c *config.Config, namespace string) (*corev1.Secre
 	}
 
 	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      c.SecretName,
-			Namespace: namespace,
-			Labels: map[string]string{
-				config.LabelManagedBy: config.AnnotationAppName,
-			},
-			Annotations: map[string]string{
-				config.AnnotationManagedBy: config.AnnotationAppName,
-			},
+		Name:      c.SecretName,
+		Namespace: namespace,
+		Labels: map[string]string{
+			config.LabelManagedBy: config.AnnotationAppName,
+		},
+		Annotations: map[string]string{
+			config.AnnotationManagedBy: config.AnnotationAppName,
 		},
 		Data: map[string][]byte{
 			corev1.DockerConfigJsonKey: []byte(dockerConfigJSON),

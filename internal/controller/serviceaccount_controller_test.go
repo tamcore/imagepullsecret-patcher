@@ -27,7 +27,6 @@ import (
 	"github.com/tamcore/imagepullsecret-patcher/internal/config"
 	corev1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -44,15 +43,11 @@ import (
 // To work around that, we just create a new namespace + sa for each test
 func makeObjects(namespaceName string, serviceAccountName string, secretName string) (corev1.Namespace, corev1.ServiceAccount, types.NamespacedName, types.NamespacedName) {
 	namespace := corev1.Namespace{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: namespaceName,
-		},
+		Name: namespaceName,
 	}
 	serviceAccount := corev1.ServiceAccount{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      serviceAccountName,
-			Namespace: namespace.GetName(),
-		},
+		Name:      serviceAccountName,
+		Namespace: namespace.GetName(),
 	}
 	serviceAccountNN := types.NamespacedName{
 		Name:      serviceAccount.GetName(),
@@ -111,10 +106,8 @@ var _ = Describe("ServiceAccount Controller", func() {
 
 			By("Creating a managed Pod with ErrImagePull to cleanup")
 			managedPod := &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "managed-errimagepull",
-					Namespace: serviceAccount.GetNamespace(),
-				},
+				Name:      "managed-errimagepull",
+				Namespace: serviceAccount.GetNamespace(),
 				Spec: corev1.PodSpec{
 					ServiceAccountName: serviceAccount.GetName(),
 					Containers: []corev1.Container{
@@ -140,10 +133,8 @@ var _ = Describe("ServiceAccount Controller", func() {
 
 			By("Creating a unmanaged Pod with ErrImagePull to cleanup")
 			unmanagedPod := &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      "unmanaged-errimagepull",
-					Namespace: serviceAccount.GetNamespace(),
-				},
+				Name:      "unmanaged-errimagepull",
+				Namespace: serviceAccount.GetNamespace(),
 				Spec: corev1.PodSpec{
 					ServiceAccountName: "entirely-unrelated-serviceaccount",
 					Containers: []corev1.Container{
@@ -222,8 +213,8 @@ var _ = Describe("ServiceAccount Controller", func() {
 
 			By("Creating a managed Pod stuck in ImagePullBackOff")
 			managedPod := &corev1.Pod{
-				ObjectMeta: metav1.ObjectMeta{Name: "events-backoff", Namespace: serviceAccount.GetNamespace()},
-				Spec:       corev1.PodSpec{ServiceAccountName: serviceAccount.GetName()},
+				Name: "events-backoff", Namespace: serviceAccount.GetNamespace(),
+				Spec: corev1.PodSpec{ServiceAccountName: serviceAccount.GetName()},
 				Status: corev1.PodStatus{
 					ContainerStatuses: []corev1.ContainerStatus{{
 						State: corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}},
@@ -331,10 +322,8 @@ var _ = Describe("ServiceAccount Controller", func() {
 
 			oldSecretData := `{"auth":{"old.example.com":{}}}`
 			preExistingSecret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      cfg.SecretName,
-					Namespace: namespace.GetName(),
-				},
+				Name:      cfg.SecretName,
+				Namespace: namespace.GetName(),
 				Data: map[string][]byte{
 					corev1.DockerConfigJsonKey: []byte(oldSecretData),
 				},
@@ -414,13 +403,13 @@ var _ = Describe("ServiceAccount Controller", func() {
 
 		It("should requeue instead of dropping the ServiceAccount", func() {
 			serviceAccount := &corev1.ServiceAccount{
-				ObjectMeta: metav1.ObjectMeta{Name: saDefault, Namespace: "ns-not-in-cache"},
+				Name: saDefault, Namespace: "ns-not-in-cache",
 			}
 			c := newFakeClient(serviceAccount)
 			reconciler := &ServiceAccountReconciler{Client: c, Scheme: c.Scheme(), Config: cfg}
 
 			result, err := reconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: types.NamespacedName{Name: saDefault, Namespace: "ns-not-in-cache"},
+				Name: saDefault, Namespace: "ns-not-in-cache",
 			})
 
 			Expect(err).NotTo(HaveOccurred())
@@ -429,18 +418,17 @@ var _ = Describe("ServiceAccount Controller", func() {
 
 		It("should fail open in predicates so Reconcile can decide", func() {
 			c := newFakeClient(
-				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "sa-predns-managed"}},
-				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+				&corev1.Namespace{Name: "sa-predns-managed"},
+				&corev1.Namespace{
 					Name:        "sa-predns-excluded",
-					Annotations: map[string]string{cfg.ExcludeAnnotation: annotationTrue},
-				}},
+					Annotations: map[string]string{cfg.ExcludeAnnotation: annotationTrue}},
 			)
 			reconciler := &ServiceAccountReconciler{Client: c, Scheme: c.Scheme(), Config: cfg}
 			pred := reconciler.managedPredicate()
 
 			saIn := func(namespace string) *corev1.ServiceAccount {
 				return &corev1.ServiceAccount{
-					ObjectMeta: metav1.ObjectMeta{Name: saDefault, Namespace: namespace},
+					Name: saDefault, Namespace: namespace,
 				}
 			}
 
@@ -476,10 +464,8 @@ var _ = Describe("ServiceAccount Controller", func() {
 			namespace, serviceAccount, serviceAccountNN, secretNN := makeObjects("testns-wrong-type", "default", cfg.SecretName)
 
 			preExistingSecret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      cfg.SecretName,
-					Namespace: namespace.GetName(),
-				},
+				Name:      cfg.SecretName,
+				Namespace: namespace.GetName(),
 				Data: map[string][]byte{
 					"some-key": []byte("some-value"),
 				},
@@ -551,19 +537,19 @@ var _ = Describe("ServiceAccount Controller", func() {
 
 		namespaceNamed := func(name string, annotations map[string]string) *corev1.Namespace {
 			return &corev1.Namespace{
-				ObjectMeta: metav1.ObjectMeta{Name: name, Annotations: annotations},
+				Name: name, Annotations: annotations,
 			}
 		}
 
 		serviceAccountIn := func(namespace string, name string) *corev1.ServiceAccount {
 			return &corev1.ServiceAccount{
-				ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+				Name: name, Namespace: namespace,
 			}
 		}
 
 		requestFor := func(namespace string, name string) reconcile.Request {
 			return reconcile.Request{
-				NamespacedName: types.NamespacedName{Namespace: namespace, Name: name},
+				Namespace: namespace, Name: name,
 			}
 		}
 

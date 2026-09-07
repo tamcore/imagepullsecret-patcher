@@ -63,12 +63,12 @@ var _ = Describe("Secret Controller", func() {
 		It("should recreate the managed secret in a managed namespace", func() {
 			scheme := newTestScheme()
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: secretNsManaged}},
+				&corev1.Namespace{Name: secretNsManaged},
 			).Build()
 			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg}
 
 			result, err := reconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: types.NamespacedName{Name: cfg.SecretName, Namespace: secretNsManaged},
+				Name: cfg.SecretName, Namespace: secretNsManaged,
 			})
 
 			Expect(err).NotTo(HaveOccurred())
@@ -81,15 +81,14 @@ var _ = Describe("Secret Controller", func() {
 		It("should skip reconciliation for excluded namespaces", func() {
 			scheme := newTestScheme()
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+				&corev1.Namespace{
 					Name:        secretNsExcluded,
-					Annotations: map[string]string{cfg.ExcludeAnnotation: annotationTrue},
-				}},
+					Annotations: map[string]string{cfg.ExcludeAnnotation: annotationTrue}},
 			).Build()
 			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg}
 
 			result, err := reconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: types.NamespacedName{Name: cfg.SecretName, Namespace: secretNsExcluded},
+				Name: cfg.SecretName, Namespace: secretNsExcluded,
 			})
 
 			Expect(err).NotTo(HaveOccurred())
@@ -104,7 +103,7 @@ var _ = Describe("Secret Controller", func() {
 			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg}
 
 			result, err := reconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: types.NamespacedName{Name: cfg.SecretName, Namespace: "secretns-gone"},
+				Name: cfg.SecretName, Namespace: "secretns-gone",
 			})
 
 			Expect(err).NotTo(HaveOccurred())
@@ -113,15 +112,13 @@ var _ = Describe("Secret Controller", func() {
 
 		It("should ignore an annotated secret whose name differs from the managed secret", func() {
 			scheme := newTestScheme()
-			namespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "secretns-foreign"}}
+			namespace := &corev1.Namespace{Name: "secretns-foreign"}
 			foreignSecret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:        "something-else",
-					Namespace:   namespace.GetName(),
-					Annotations: map[string]string{config.AnnotationManagedBy: config.AnnotationAppName},
-				},
-				Type: corev1.SecretTypeOpaque,
-				Data: map[string][]byte{"foo": []byte("bar")},
+				Name:        "something-else",
+				Namespace:   namespace.GetName(),
+				Annotations: map[string]string{config.AnnotationManagedBy: config.AnnotationAppName},
+				Type:        corev1.SecretTypeOpaque,
+				Data:        map[string][]byte{"foo": []byte("bar")},
 			}
 			foreignSecretNN := types.NamespacedName{
 				Name:      foreignSecret.GetName(),
@@ -170,13 +167,13 @@ var _ = Describe("Secret Controller", func() {
 		It("should emit a Created Event when the managed secret is created", func() {
 			scheme := newTestScheme()
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: secretNsManaged}},
+				&corev1.Namespace{Name: secretNsManaged},
 			).Build()
 			rec := record.NewFakeRecorder(10)
 			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg, Recorder: rec}
 
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: types.NamespacedName{Name: cfg.SecretName, Namespace: secretNsManaged},
+				Name: cfg.SecretName, Namespace: secretNsManaged,
 			})
 
 			Expect(err).NotTo(HaveOccurred())
@@ -189,23 +186,21 @@ var _ = Describe("Secret Controller", func() {
 		It("should emit an Updated Event when stale secret data is corrected", func() {
 			scheme := newTestScheme()
 			staleSecret := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      cfg.SecretName,
-					Namespace: secretNsManaged,
-					Labels:    map[string]string{config.LabelManagedBy: config.AnnotationAppName},
-				},
-				Type: corev1.SecretTypeDockerConfigJson,
-				Data: map[string][]byte{corev1.DockerConfigJsonKey: []byte(`{"auths":{"stale":{}}}`)},
+				Name:      cfg.SecretName,
+				Namespace: secretNsManaged,
+				Labels:    map[string]string{config.LabelManagedBy: config.AnnotationAppName},
+				Type:      corev1.SecretTypeDockerConfigJson,
+				Data:      map[string][]byte{corev1.DockerConfigJsonKey: []byte(`{"auths":{"stale":{}}}`)},
 			}
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: secretNsManaged}},
+				&corev1.Namespace{Name: secretNsManaged},
 				staleSecret,
 			).Build()
 			rec := record.NewFakeRecorder(10)
 			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg, Recorder: rec}
 
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: types.NamespacedName{Name: cfg.SecretName, Namespace: secretNsManaged},
+				Name: cfg.SecretName, Namespace: secretNsManaged,
 			})
 
 			Expect(err).NotTo(HaveOccurred())
@@ -215,24 +210,22 @@ var _ = Describe("Secret Controller", func() {
 		It("should emit no Event when the managed secret is already up-to-date", func() {
 			scheme := newTestScheme()
 			upToDate := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:        cfg.SecretName,
-					Namespace:   secretNsManaged,
-					Labels:      map[string]string{config.LabelManagedBy: config.AnnotationAppName},
-					Annotations: map[string]string{config.AnnotationManagedBy: config.AnnotationAppName},
-				},
-				Type: corev1.SecretTypeDockerConfigJson,
-				Data: map[string][]byte{corev1.DockerConfigJsonKey: []byte(imagePullSecretData)},
+				Name:        cfg.SecretName,
+				Namespace:   secretNsManaged,
+				Labels:      map[string]string{config.LabelManagedBy: config.AnnotationAppName},
+				Annotations: map[string]string{config.AnnotationManagedBy: config.AnnotationAppName},
+				Type:        corev1.SecretTypeDockerConfigJson,
+				Data:        map[string][]byte{corev1.DockerConfigJsonKey: []byte(imagePullSecretData)},
 			}
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: secretNsManaged}},
+				&corev1.Namespace{Name: secretNsManaged},
 				upToDate,
 			).Build()
 			rec := record.NewFakeRecorder(10)
 			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg, Recorder: rec}
 
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: types.NamespacedName{Name: cfg.SecretName, Namespace: secretNsManaged},
+				Name: cfg.SecretName, Namespace: secretNsManaged,
 			})
 
 			Expect(err).NotTo(HaveOccurred())
@@ -243,18 +236,16 @@ var _ = Describe("Secret Controller", func() {
 	Context("When filtering events with managedPredicate", func() {
 		managedSecret := func(namespace string) *corev1.Secret {
 			return &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:        cfg.SecretName,
-					Namespace:   namespace,
-					Annotations: map[string]string{config.AnnotationManagedBy: config.AnnotationAppName},
-				},
+				Name:        cfg.SecretName,
+				Namespace:   namespace,
+				Annotations: map[string]string{config.AnnotationManagedBy: config.AnnotationAppName},
 			}
 		}
 
 		It("should process managed secrets in managed namespaces", func() {
 			scheme := newTestScheme()
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "predns-managed"}},
+				&corev1.Namespace{Name: "predns-managed"},
 			).Build()
 			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg}
 
@@ -268,10 +259,9 @@ var _ = Describe("Secret Controller", func() {
 		It("should drop events in excluded namespaces", func() {
 			scheme := newTestScheme()
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+				&corev1.Namespace{
 					Name:        "predns-excluded",
-					Annotations: map[string]string{cfg.ExcludeAnnotation: annotationTrue},
-				}},
+					Annotations: map[string]string{cfg.ExcludeAnnotation: annotationTrue}},
 			).Build()
 			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg}
 
@@ -295,11 +285,10 @@ var _ = Describe("Secret Controller", func() {
 			scheme := newTestScheme()
 			now := metav1.Now()
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-				&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+				&corev1.Namespace{
 					Name:              "predns-terminating",
 					DeletionTimestamp: &now,
-					Finalizers:        []string{"kubernetes"},
-				}},
+					Finalizers:        []string{"kubernetes"}},
 			).Build()
 			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg}
 
