@@ -126,7 +126,7 @@ func main() {
 	}
 
 	if !noAutoMemlimit {
-		if _, err := memlimit.SetGoMemLimitWithOpts(
+		if _, err := memlimit.Set(
 			memlimit.WithRatio(autoMemlimitRatio),
 			memlimit.WithProvider(
 				memlimit.ApplyFallback(
