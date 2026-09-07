@@ -106,9 +106,18 @@ jobs:
     - name: Download prebuilt binaries
       run: make prebuilts
 
+    - name: Resolve pinned kind version
+      id: kind-version
+      run: |
+        set -euo pipefail
+        version=$(sed -n 's/^KIND_VERSION ?= //p' Makefile)
+        [ -n "${version}" ] || { echo "KIND_VERSION not found in Makefile" >&2; exit 1; }
+        echo "version=${version}" >> "$GITHUB_OUTPUT"
+
     - name: Create kind cluster
       uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1
       with:
+        version: ${{ steps.kind-version.outputs.version }}
         node_image: "kindest/node:${{ matrix.k8s_version }}"
         cluster_name: kind-cluster-${{ matrix.k8s_version }}
         config: tests/e2e/kind.yaml

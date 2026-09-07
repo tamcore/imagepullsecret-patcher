@@ -27,7 +27,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
@@ -64,15 +63,11 @@ func Test_IsServiceAccountManaged(t *testing.T) {
 			"Namespace not excluded. ServiceAccount not excluded. Should be managed = true.",
 			args{
 				&corev1.Namespace{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: nsDefault,
-					},
+					Name: nsDefault,
 				},
 				&corev1.ServiceAccount{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      nsDefault,
-						Namespace: nsDefault,
-					},
+					Name:      nsDefault,
+					Namespace: nsDefault,
 				},
 			},
 			"*",
@@ -82,15 +77,11 @@ func Test_IsServiceAccountManaged(t *testing.T) {
 			"Namespace not excluded. ServiceAccount not excluded, but not configured. Should be unmanaged = false.",
 			args{
 				&corev1.Namespace{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: nsDefault,
-					},
+					Name: nsDefault,
 				},
 				&corev1.ServiceAccount{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      nsDefault,
-						Namespace: nsDefault,
-					},
+					Name:      nsDefault,
+					Namespace: nsDefault,
 				},
 			},
 			"global-imagepull-serviceaccount",
@@ -100,18 +91,14 @@ func Test_IsServiceAccountManaged(t *testing.T) {
 			"Namespace excluded. ServiceAccount not excluded. Should be unmanaged = false.",
 			args{
 				&corev1.Namespace{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: nsDefault,
-						Annotations: map[string]string{
-							"pborn.eu/imagepullsecret-patcher-exclude": annotationTrue,
-						},
+					Name: nsDefault,
+					Annotations: map[string]string{
+						"pborn.eu/imagepullsecret-patcher-exclude": annotationTrue,
 					},
 				},
 				&corev1.ServiceAccount{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      nsDefault,
-						Namespace: nsDefault,
-					},
+					Name:      nsDefault,
+					Namespace: nsDefault,
 				},
 			},
 			"*",
@@ -121,17 +108,13 @@ func Test_IsServiceAccountManaged(t *testing.T) {
 			"Namespace not excluded. ServiceAccount excluded. Should be unmanaged = false.",
 			args{
 				&corev1.Namespace{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: nsDefault,
-					},
+					Name: nsDefault,
 				},
 				&corev1.ServiceAccount{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      nsDefault,
-						Namespace: nsDefault,
-						Annotations: map[string]string{
-							"pborn.eu/imagepullsecret-patcher-exclude": annotationTrue,
-						},
+					Name:      nsDefault,
+					Namespace: nsDefault,
+					Annotations: map[string]string{
+						"pborn.eu/imagepullsecret-patcher-exclude": annotationTrue,
 					},
 				},
 			},
@@ -179,17 +162,13 @@ func Test_IsManagedSecret(t *testing.T) {
 			"Namespace not excluded. Secret has required annotations. Should be managed = true.",
 			args{
 				&corev1.Namespace{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: nsDefault,
-					},
+					Name: nsDefault,
 				},
 				&corev1.Secret{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      nsDefault,
-						Namespace: nsDefault,
-						Annotations: map[string]string{
-							config.AnnotationManagedBy: config.AnnotationAppName,
-						},
+					Name:      nsDefault,
+					Namespace: nsDefault,
+					Annotations: map[string]string{
+						config.AnnotationManagedBy: config.AnnotationAppName,
 					},
 				},
 			},
@@ -199,14 +178,10 @@ func Test_IsManagedSecret(t *testing.T) {
 			"Namespace not excluded. Secret does not have required annotations. Should be unmanaged = false.",
 			args{
 				&corev1.Namespace{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: nsDefault,
-					},
+					Name: nsDefault,
 				},
 				&corev1.Secret{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: nsDefault,
-					},
+					Name: nsDefault,
 				},
 			},
 			False,
@@ -215,15 +190,11 @@ func Test_IsManagedSecret(t *testing.T) {
 			"Namespace not excluded. Secret is our source of truth. Should be unmanaged = false.",
 			args{
 				&corev1.Namespace{
-					ObjectMeta: metav1.ObjectMeta{
-						Name: nsDefault,
-					},
+					Name: nsDefault,
 				},
 				&corev1.Secret{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      cfg.SecretName,
-						Namespace: cfg.SecretNamespace,
-					},
+					Name:      cfg.SecretName,
+					Namespace: cfg.SecretNamespace,
 				},
 			},
 			False,
@@ -249,9 +220,7 @@ func Test_HasAnnotation(t *testing.T) {
 		{
 			"No annotations present. Should be false.",
 			&corev1.Namespace{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: nsDefault,
-				},
+				Name: nsDefault,
 			},
 			"foo",
 			"bar",
@@ -260,11 +229,9 @@ func Test_HasAnnotation(t *testing.T) {
 		{
 			"Desired annotation present. Should be true.",
 			&corev1.Namespace{
-				ObjectMeta: metav1.ObjectMeta{
-					Name: nsDefault,
-					Annotations: map[string]string{
-						config.AnnotationManagedBy: config.AnnotationAppName,
-					},
+				Name: nsDefault,
+				Annotations: map[string]string{
+					config.AnnotationManagedBy: config.AnnotationAppName,
 				},
 			},
 			config.AnnotationManagedBy,
@@ -303,9 +270,9 @@ func newFailingPod(name string, namespace string, serviceAccount string, reasons
 		})
 	}
 	return &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
-		Spec:       corev1.PodSpec{ServiceAccountName: serviceAccount},
-		Status:     corev1.PodStatus{ContainerStatuses: statuses},
+		Name: name, Namespace: namespace,
+		Spec:   corev1.PodSpec{ServiceAccountName: serviceAccount},
+		Status: corev1.PodStatus{ContainerStatuses: statuses},
 	}
 }
 
@@ -336,9 +303,9 @@ func newCountingClient(deletes *int, saGets *int, deleteNotFound bool, objs ...c
 }
 
 func Test_CleanupPodsForNamespace(t *testing.T) {
-	managedNamespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: nsDefault}}
-	managedSA := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: nsDefault, Namespace: nsDefault}}
-	unmanagedSA := &corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: nsDefault}}
+	managedNamespace := &corev1.Namespace{Name: nsDefault}
+	managedSA := &corev1.ServiceAccount{Name: nsDefault, Namespace: nsDefault}
+	unmanagedSA := &corev1.ServiceAccount{Name: "other", Namespace: nsDefault}
 
 	tests := []struct {
 		name           string
@@ -398,7 +365,7 @@ func Test_CleanupPodsForNamespace(t *testing.T) {
 			c := newCountingClient(&deletes, &saGets, tt.deleteNotFound, tt.objects...)
 
 			// Act
-			deleted, err := CleanupPodsForNamespace(context.Background(), cfg, c, nsDefault)
+			deleted, err := CleanupPodsForNamespace(t.Context(), cfg, c, nsDefault)
 
 			// Assert
 			if (err != nil) != tt.wantErr {
@@ -419,19 +386,18 @@ func Test_CleanupPodsForNamespace(t *testing.T) {
 	t.Run("excluded namespace deletes nothing", func(t *testing.T) {
 		// Arrange
 		cfg := newCleanupTestConfig(t)
-		excludedNamespace := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{
+		excludedNamespace := &corev1.Namespace{
 			Name:        "kube-excluded",
-			Annotations: map[string]string{cfg.ExcludeAnnotation: annotationTrue},
-		}}
+			Annotations: map[string]string{cfg.ExcludeAnnotation: annotationTrue}}
 		deletes, saGets := 0, 0
 		c := newCountingClient(&deletes, &saGets, false,
 			excludedNamespace,
-			&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: nsDefault, Namespace: "kube-excluded"}},
+			&corev1.ServiceAccount{Name: nsDefault, Namespace: "kube-excluded"},
 			newFailingPod("pod-a", "kube-excluded", nsDefault, "ErrImagePull"),
 		)
 
 		// Act
-		deleted, err := CleanupPodsForNamespace(context.Background(), cfg, c, "kube-excluded")
+		deleted, err := CleanupPodsForNamespace(t.Context(), cfg, c, "kube-excluded")
 
 		// Assert
 		if err != nil {
@@ -476,7 +442,7 @@ func Test_CleanupPodsForSA(t *testing.T) {
 			c := newCountingClient(&deletes, &saGets, tt.deleteNotFound, tt.objects...)
 
 			// Act
-			deleted, err := CleanupPodsForSA(context.Background(), c, nsDefault, nsDefault)
+			deleted, err := CleanupPodsForSA(t.Context(), c, nsDefault, nsDefault)
 
 			// Assert
 			if err != nil {
@@ -740,7 +706,7 @@ func Test_ReconcileImagePullSecret(t *testing.T) {
 			k8sClient := newFakeClient(t, objs...)
 
 			// Act (nil apiReader exercises the fallback to k8sClient)
-			sec, action, err := ReconcileImagePullSecret(context.Background(), k8sClient, nil, cfg, nsDefault)
+			sec, action, err := ReconcileImagePullSecret(t.Context(), k8sClient, nil, cfg, nsDefault)
 
 			// Assert
 			if err != nil {
@@ -755,7 +721,7 @@ func Test_ReconcileImagePullSecret(t *testing.T) {
 				t.Error("ReconcileImagePullSecret() returned nil Secret on a changing action")
 			}
 			got := &corev1.Secret{}
-			if err := k8sClient.Get(context.Background(),
+			if err := k8sClient.Get(t.Context(),
 				types.NamespacedName{Name: cfg.SecretName, Namespace: nsDefault}, got); err != nil {
 				t.Fatalf("failed to fetch reconciled Secret: %v", err)
 			}
@@ -796,12 +762,10 @@ func Test_ReconcileImagePullSecret_AdoptsPreExistingSecrets(t *testing.T) {
 			// Arrange
 			cfg := newReconcileTestConfig(t)
 			preExisting := &corev1.Secret{
-				ObjectMeta: metav1.ObjectMeta{
-					Name:      cfg.SecretName,
-					Namespace: nsDefault,
-					Annotations: map[string]string{
-						foreignAnnotationKey: foreignAnnotationValue,
-					},
+				Name:      cfg.SecretName,
+				Namespace: nsDefault,
+				Annotations: map[string]string{
+					foreignAnnotationKey: foreignAnnotationValue,
 				},
 				Data: map[string][]byte{
 					"some-key": []byte("some-value"),
@@ -835,7 +799,7 @@ func Test_ReconcileImagePullSecret_AdoptsPreExistingSecrets(t *testing.T) {
 			})
 
 			// Act
-			sec, action, err := ReconcileImagePullSecret(context.Background(), labelFilteredClient, rawClient, cfg, nsDefault)
+			sec, action, err := ReconcileImagePullSecret(t.Context(), labelFilteredClient, rawClient, cfg, nsDefault)
 
 			// Assert
 			if err != nil {
@@ -852,7 +816,7 @@ func Test_ReconcileImagePullSecret_AdoptsPreExistingSecrets(t *testing.T) {
 			}
 
 			got := &corev1.Secret{}
-			if err := rawClient.Get(context.Background(),
+			if err := rawClient.Get(t.Context(),
 				types.NamespacedName{Name: cfg.SecretName, Namespace: nsDefault}, got); err != nil {
 				t.Fatalf("failed to fetch reconciled Secret: %v", err)
 			}
@@ -899,7 +863,7 @@ func Test_WaitUntilFileChanges(t *testing.T) {
 		missingFile := filepath.Join(t.TempDir(), "missing.json")
 
 		// Act
-		err := WaitUntilFileChanges(context.Background(), missingFile)
+		err := WaitUntilFileChanges(t.Context(), missingFile)
 
 		// Assert
 		if err == nil {
@@ -910,7 +874,7 @@ func Test_WaitUntilFileChanges(t *testing.T) {
 	t.Run("returns ctx.Err() when context is cancelled and file never changes", func(t *testing.T) {
 		// Arrange
 		filename := writeWatchedFile(t)
-		ctx, cancel := context.WithCancel(context.Background())
+		ctx, cancel := context.WithCancel(t.Context())
 		timer := time.AfterFunc(cancelDelay, cancel)
 		defer timer.Stop()
 		defer cancel()
@@ -933,7 +897,7 @@ func Test_WaitUntilFileChanges(t *testing.T) {
 	t.Run("returns nil when file modification time changes", func(t *testing.T) {
 		// Arrange
 		filename := writeWatchedFile(t)
-		ctx, cancel := context.WithTimeout(context.Background(), watchTimeout)
+		ctx, cancel := context.WithTimeout(t.Context(), watchTimeout)
 		defer cancel()
 
 		// Act
@@ -975,7 +939,7 @@ func Test_ReconcileImagePullSecret_WrapsGetError(t *testing.T) {
 	}
 
 	// Act
-	_, _, err := ReconcileImagePullSecret(context.Background(), k8sClient, nil, cfg, nsDefault)
+	_, _, err := ReconcileImagePullSecret(t.Context(), k8sClient, nil, cfg, nsDefault)
 
 	// Assert
 	if err == nil {

@@ -26,7 +26,6 @@ import (
 	. "github.com/onsi/gomega"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	kruntime "k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -55,20 +54,16 @@ var _ = Describe("DockerConfigWatcher", func() {
 		Expect(clientgoscheme.AddToScheme(scheme)).To(Succeed())
 
 		namespace := &corev1.Namespace{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: watcherTestNamespace,
-			},
+			Name: watcherTestNamespace,
 		}
 		managedSecret := &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{
-				Name:      watcherTestSecretName,
-				Namespace: watcherTestNamespace,
-				Labels: map[string]string{
-					config.LabelManagedBy: config.AnnotationAppName,
-				},
-				Annotations: map[string]string{
-					config.AnnotationManagedBy: config.AnnotationAppName,
-				},
+			Name:      watcherTestSecretName,
+			Namespace: watcherTestNamespace,
+			Labels: map[string]string{
+				config.LabelManagedBy: config.AnnotationAppName,
+			},
+			Annotations: map[string]string{
+				config.AnnotationManagedBy: config.AnnotationAppName,
 			},
 		}
 		fakeClient := fake.NewClientBuilder().
