@@ -40,19 +40,12 @@ func IsServiceAccountManaged(c *config.Config, namespace client.Object, serviceA
 	if IsNamespaceExcluded(c, namespace) || IsServiceAccountExcluded(c, serviceAccount) {
 		return false
 	}
-	if IsStringInList(serviceAccount.GetName(), c.ServiceAccounts) {
-		return true
-	}
-
-	return false
+	return IsStringInList(serviceAccount.GetName(), c.ServiceAccounts)
 }
 
 func IsNamespaceExcluded(c *config.Config, namespace client.Object) bool {
-	if IsStringInList(namespace.GetName(), c.ExcludedNamespaces) {
-		return true
-	}
-
-	return HasAnnotation(namespace, c.ExcludeAnnotation, "true")
+	return IsStringInList(namespace.GetName(), c.ExcludedNamespaces) ||
+		HasAnnotation(namespace, c.ExcludeAnnotation, "true")
 }
 
 func IsStringInList(find string, list string) bool {
@@ -84,15 +77,8 @@ func IsManagedSecret(c *config.Config, namespace client.Object, secret client.Ob
 }
 
 func HasAnnotation(obj client.Object, annotationKey string, annotationValue string) bool {
-	annotations := obj.GetAnnotations()
-	if annotations == nil {
-		return false
-	}
-	excludeAnnotation, ok := annotations[annotationKey]
-	if ok && excludeAnnotation == annotationValue {
-		return true
-	}
-	return false
+	value, ok := obj.GetAnnotations()[annotationKey]
+	return ok && value == annotationValue
 }
 
 func FetchNamespace(ctx context.Context, client client.Client, namespaceName string) (*corev1.Namespace, error) {
@@ -138,49 +124,42 @@ func CleanupPodsForNamespace(ctx context.Context, c *config.Config, k8sClient cl
 		return 0, nil
 	}
 
-	podList := &corev1.PodList{}
-	if err := k8sClient.List(ctx, podList, client.InNamespace(namespace)); err != nil {
-		return 0, fmt.Errorf("failed to fetch pods: %w", err)
-	}
-
 	// Cache the managed-state per ServiceAccount so pods sharing one don't
 	// trigger repeated lookups.
 	saManaged := map[string]bool{}
-	deleted := 0
-	for _, pod := range podList.Items {
-		managed, known := saManaged[pod.Spec.ServiceAccountName]
-		if !known {
-			sa, err := FetchServiceAccount(ctx, k8sClient, namespace, pod.Spec.ServiceAccountName)
-			if err != nil {
-				if apierrs.IsNotFound(err) {
-					// The ServiceAccount is gone; its pods are not managed by us.
-					saManaged[pod.Spec.ServiceAccountName] = false
-					continue
-				}
-				return deleted, fmt.Errorf("failed to fetch serviceAccount: %w", err)
-			}
-			managed = IsServiceAccountManaged(c, ns, sa)
-			saManaged[pod.Spec.ServiceAccountName] = managed
+	inScope := func(ctx context.Context, pod *corev1.Pod) (bool, error) {
+		if managed, known := saManaged[pod.Spec.ServiceAccountName]; known {
+			return managed, nil
 		}
-		if !managed {
-			continue
-		}
-
-		didDelete, err := deletePodIfImagePullFailed(ctx, k8sClient, &pod)
+		sa, err := FetchServiceAccount(ctx, k8sClient, namespace, pod.Spec.ServiceAccountName)
 		if err != nil {
-			return deleted, err
+			if apierrs.IsNotFound(err) {
+				// The ServiceAccount is gone; its pods are not managed by us.
+				saManaged[pod.Spec.ServiceAccountName] = false
+				return false, nil
+			}
+			return false, fmt.Errorf("failed to fetch serviceAccount: %w", err)
 		}
-		if didDelete {
-			deleted++
-		}
+		managed := IsServiceAccountManaged(c, ns, sa)
+		saManaged[pod.Spec.ServiceAccountName] = managed
+		return managed, nil
 	}
 
-	return deleted, nil
+	return cleanupPods(ctx, k8sClient, namespace, inScope)
 }
 
 // CleanupPodsForSA deletes pods of the given ServiceAccount stuck in an image
 // pull failure. It returns the number of pods deleted.
 func CleanupPodsForSA(ctx context.Context, k8sClient client.Client, namespace string, serviceAccount string) (int, error) {
+	return cleanupPods(ctx, k8sClient, namespace, func(_ context.Context, pod *corev1.Pod) (bool, error) {
+		return pod.Spec.ServiceAccountName == serviceAccount, nil
+	})
+}
+
+// cleanupPods deletes every pod in namespace that inScope accepts and that is
+// stuck in an image pull failure. It returns the number of pods deleted, along
+// with the first error encountered.
+func cleanupPods(ctx context.Context, k8sClient client.Client, namespace string, inScope func(context.Context, *corev1.Pod) (bool, error)) (int, error) {
 	podList := &corev1.PodList{}
 	if err := k8sClient.List(ctx, podList, client.InNamespace(namespace)); err != nil {
 		return 0, fmt.Errorf("failed to fetch pods: %w", err)
@@ -188,7 +167,11 @@ func CleanupPodsForSA(ctx context.Context, k8sClient client.Client, namespace st
 
 	deleted := 0
 	for _, pod := range podList.Items {
-		if pod.Spec.ServiceAccountName != serviceAccount {
+		scoped, err := inScope(ctx, &pod)
+		if err != nil {
+			return deleted, err
+		}
+		if !scoped {
 			continue
 		}
 
@@ -400,13 +383,9 @@ func ConstructImagePullSecret(c *config.Config, namespace string) (*corev1.Secre
 	return secret, nil
 }
 
+// GetDockerConfigJSON returns the credentials from the inline value or the
+// mounted file. config.New has already rejected an empty or ambiguous pair.
 func GetDockerConfigJSON(c *config.Config) (string, error) {
-	if c.DockerConfigJSON == "" && c.DockerConfigJSONPath == "" {
-		return "", fmt.Errorf("neither CONFIG_DOCKERCONFIGJSON nor CONFIG_DOCKERCONFIGJSONPATH defined")
-	}
-	if c.DockerConfigJSON != "" && c.DockerConfigJSONPath != "" {
-		return "", fmt.Errorf("cannot specify both CONFIG_DOCKERCONFIGJSON and CONFIG_DOCKERCONFIGJSONPATH")
-	}
 	if c.DockerConfigJSON != "" {
 		return c.DockerConfigJSON, nil
 	}

@@ -25,7 +25,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrs "k8s.io/apimachinery/pkg/api/errors"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -57,7 +56,6 @@ type ServiceAccountReconciler struct {
 	// APIReader reads directly from the API server, bypassing the
 	// label-filtered cache (used to inspect pre-existing secrets).
 	APIReader client.Reader
-	Scheme    *runtime.Scheme
 	Config    *config.Config
 	// Recorder emits Events on reconciled objects. May be nil in tests.
 	Recorder record.EventRecorder

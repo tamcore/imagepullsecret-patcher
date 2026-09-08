@@ -4,7 +4,6 @@ go 1.27.1
 
 require (
 	github.com/KimMachineGun/automemlimit v1.0.0
-	github.com/caitlinelfring/go-env-default v1.1.0
 	github.com/onsi/ginkgo/v2 v2.32.1
 	github.com/onsi/gomega v1.43.0
 	go.uber.org/automaxprocs v1.6.0
@@ -83,5 +82,3 @@ require (
 	sigs.k8s.io/structured-merge-diff/v6 v6.4.2 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
-
-replace github.com/imdario/mergo => github.com/imdario/mergo v0.3.16

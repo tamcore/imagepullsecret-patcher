@@ -58,22 +58,10 @@ func main() {
 	var noAutoMaxProcs bool
 	var noAutoMemlimit bool
 	var autoMemlimitRatio float64
-	var featureDeletePods bool
-	var featureWatchDockerConfigJSONPath bool
-	var maxConcurrentReconciles int
 
-	// -serviceaccounts
-	var serviceAccounts string
-	// -dockerconfigjson
-	var dockerConfigJSON string
-	// -dockerconfigjsonpath
-	var dockerConfigJSONPath string
-	// -secretname
-	var secretName string
-	// -secretnamespace
-	var secretNamespace string
-	// -excluded-namespaces
-	var excludedNamespaces string
+	// Flag defaults come from the CONFIG_* environment variables, so a flag
+	// always overrides the environment.
+	controllerConfig := config.FromEnv()
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080",
 		"The address the metric endpoint binds to.")
@@ -88,31 +76,32 @@ func main() {
 		"Do not automatically set GOMAXPROCS to match container or system cpu quota.")
 	flag.BoolVar(&noAutoMemlimit, "no-auto-memlimit", false,
 		"Do not automatically set GOMEMLIMIT to match container or system memory limit.")
-
-	flag.BoolVar(&featureDeletePods, "deletepods", false,
-		"Auto delete Pods in ErrImagePull or ImagePullBackOff, "+
-			"after patching their ServiceAccount or the ImagePullSecret attached to it.")
-	flag.BoolVar(&featureWatchDockerConfigJSONPath, "watchdockerconfigjsonpath", false,
-		"Watch the file referenced in dockerConfigJSONPath for changes "+
-			"and trigger a reconciliation of all secrets if it's changed.")
-
 	flag.Float64Var(&autoMemlimitRatio, "auto-memlimit-ratio", float64(0.9),
 		"The ratio of reserved GOMEMLIMIT memory to the detected maximum container or system memory.")
-	flag.StringVar(&serviceAccounts, "serviceaccounts", "",
+
+	flag.BoolVar(&controllerConfig.FeatureDeletePods, "deletepods", controllerConfig.FeatureDeletePods,
+		"Auto delete Pods in ErrImagePull or ImagePullBackOff, "+
+			"after patching their ServiceAccount or the ImagePullSecret attached to it.")
+	flag.BoolVar(&controllerConfig.FeatureWatchDockerConfigJSONPath, "watchdockerconfigjsonpath",
+		controllerConfig.FeatureWatchDockerConfigJSONPath,
+		"Watch the file referenced in dockerConfigJSONPath for changes "+
+			"and trigger a reconciliation of all secrets if it's changed.")
+	flag.StringVar(&controllerConfig.ServiceAccounts, "serviceaccounts", controllerConfig.ServiceAccounts,
 		"comma-separated list of serviceaccounts to patch")
-	flag.StringVar(&dockerConfigJSON, "dockerconfigjson", "",
+	flag.StringVar(&controllerConfig.DockerConfigJSON, "dockerconfigjson", controllerConfig.DockerConfigJSON,
 		"json credential for authenticating container registry")
-	flag.StringVar(&dockerConfigJSONPath, "dockerconfigjsonpath", "",
+	flag.StringVar(&controllerConfig.DockerConfigJSONPath, "dockerconfigjsonpath", controllerConfig.DockerConfigJSONPath,
 		"path for mounted json credentials")
-	flag.StringVar(&secretName, "secretname", "",
+	flag.StringVar(&controllerConfig.SecretName, "secretname", controllerConfig.SecretName,
 		"name of to be managed secret")
-	flag.StringVar(&secretNamespace, "secretnamespace", "",
+	flag.StringVar(&controllerConfig.SecretNamespace, "secretnamespace", controllerConfig.SecretNamespace,
 		"namespace where original secret can be found")
-	flag.StringVar(&excludedNamespaces, "excluded-namespaces", "",
+	flag.StringVar(&controllerConfig.ExcludedNamespaces, "excluded-namespaces", controllerConfig.ExcludedNamespaces,
 		"comma-separated namespaces excluded from processing")
-	// maxConcurrentReconciles sets the maximum number of concurrent Reconciles which can be run. Defaults to 1.
-	flag.IntVar(&maxConcurrentReconciles, "max-concurrent-reconciles", 1,
+	flag.IntVar(&controllerConfig.MaxConcurrentReconciles, "max-concurrent-reconciles",
+		controllerConfig.MaxConcurrentReconciles,
 		"the maximum number of concurrent Reconciles which can be run")
+
 	opts := zap.Options{
 		Development: true,
 	}
@@ -171,38 +160,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Construct the functional option slice
-	var configOpts []config.ConfigOption
-	if featureDeletePods {
-		configOpts = append(configOpts, config.WithFeatureDeletePods(featureDeletePods))
-	}
-	if featureWatchDockerConfigJSONPath {
-		configOpts = append(configOpts, config.WithFeatureWatchDockerConfigJSONPath(featureWatchDockerConfigJSONPath))
-	}
-	if dockerConfigJSON != "" {
-		configOpts = append(configOpts, config.WithDockerConfigJSON(dockerConfigJSON))
-	}
-	if dockerConfigJSONPath != "" {
-		configOpts = append(configOpts, config.WithDockerConfigJSONPath(dockerConfigJSONPath))
-	}
-	if secretName != "" {
-		configOpts = append(configOpts, config.WithSecretName(secretName))
-	}
-	if secretNamespace != "" {
-		configOpts = append(configOpts, config.WithSecretNamespace(secretNamespace))
-	}
-	if excludedNamespaces != "" {
-		configOpts = append(configOpts, config.WithExcludedNamespaces(excludedNamespaces))
-	}
-	if serviceAccounts != "" {
-		configOpts = append(configOpts, config.WithServiceAccounts(serviceAccounts))
-	}
-	if maxConcurrentReconciles != 1 {
-		configOpts = append(configOpts, config.WithMaxConcurrentReconciles(maxConcurrentReconciles))
-	}
-
-	// Now pass all functional options to NewConfig
-	controllerConfig, err := config.NewConfig(configOpts...)
+	cfg, err := config.New(controllerConfig)
 	if err != nil {
 		setupLog.Error(err, "invalid configuration")
 		os.Exit(1)
@@ -211,8 +169,7 @@ func main() {
 	if err = (&controller.ServiceAccountReconciler{
 		Client:    mgr.GetClient(),
 		APIReader: mgr.GetAPIReader(),
-		Scheme:    mgr.GetScheme(),
-		Config:    controllerConfig,
+		Config:    cfg,
 		// The old (record) events API is sufficient here; the new events API
 		// would force an "action" verb we don't need. controller-runtime itself
 		// still exercises this call, suppressing the same deprecation.
@@ -225,8 +182,7 @@ func main() {
 	if err = (&controller.SecretReconciler{
 		Client:    mgr.GetClient(),
 		APIReader: mgr.GetAPIReader(),
-		Scheme:    mgr.GetScheme(),
-		Config:    controllerConfig,
+		Config:    cfg,
 		Recorder:  mgr.GetEventRecorderFor("imagepullsecret-patcher"), //nolint:staticcheck // old events API is intentional
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Secret")

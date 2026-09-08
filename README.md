@@ -28,14 +28,21 @@ helm upgrade --install \
 
 Available configuration options are
 
-| Config name          | ENV                         | Command flag          | Default value          | Description                                                                                                                                                  |
-| -------------------- | --------------------------- | --------------------- | -----------------------| -------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| debug                | CONFIG_DEBUG                | -debug                | false                  | show DEBUG logs                                                                                                                                              |
-| serviceaccounts      | CONFIG_SERVICEACCOUNTS      | -serviceaccounts      | "default"              | comma-separated list of ServiceAccounts to reconcile                                                                                                             |
-| dockerconfigjson     | CONFIG_DOCKERCONFIGJSON     | -dockerconfigjson     | ""                     | json credentials for authenticating to container registry                                                                                                        |
-| dockerconfigjsonpath | CONFIG_DOCKERCONFIGJSONPATH | -dockerconfigjsonpath | ""                     | absolute path to mounted json credentials                                                                                              |
-| secret name          | CONFIG_SECRETNAME           | -secretname           | "global-imagepullsecret"    | name of managed secrets                                                                                                                                      |
-| excluded namespaces  | CONFIG_EXCLUDED_NAMESPACES  | -excluded-namespaces  | "kube-*"                     | comma-separated namespaces excluded from processing                                                                                                          |
+| Config name | ENV | Command flag | Default value | Description |
+| --- | --- | --- | --- | --- |
+| serviceaccounts | CONFIG_SERVICEACCOUNTS | -serviceaccounts | "default" | comma-separated list of ServiceAccounts to reconcile, glob patterns allowed |
+| dockerconfigjson | CONFIG_DOCKERCONFIGJSON | -dockerconfigjson | "" | json credentials for authenticating to container registry |
+| dockerconfigjsonpath | CONFIG_DOCKERCONFIGJSONPATH | -dockerconfigjsonpath | "" | absolute path to mounted json credentials |
+| watch dockerconfigjsonpath | CONFIG_WATCH_DOCKERCONFIGJSONPATH | -watchdockerconfigjsonpath | false | watch the file in dockerconfigjsonpath and reconcile all managed secrets when it changes |
+| secret name | CONFIG_SECRETNAME | -secretname | "global-imagepullsecret" | name of managed secrets |
+| secret namespace | CONFIG_SECRET_NAMESPACE | -secretnamespace | "" | namespace holding the original secret, defaults to the namespace the controller runs in |
+| excluded namespaces | CONFIG_EXCLUDED_NAMESPACES | -excluded-namespaces | "kube-*" | comma-separated namespaces excluded from processing, glob patterns allowed |
+| exclude annotation | CONFIG_EXCLUDE_ANNOTATION | | "pborn.eu/imagepullsecret-patcher-exclude" | annotation that excludes a namespace or ServiceAccount from processing |
+| delete pods | CONFIG_DELETE_PODS | -deletepods | false | delete Pods in ErrImagePull or ImagePullBackOff after patching their ServiceAccount or its imagePullSecret |
+| max concurrent reconciles | CONFIG_MAX_CONCURRENT_RECONCILES | -max-concurrent-reconciles | 1 | maximum number of concurrent reconciles per controller |
+
+A command flag always overrides the matching environment variable.
+
 And here are the annotations available:
 
 | Annotation                                        | Object    | Description                                                                                                       |

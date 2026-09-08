@@ -75,10 +75,10 @@ var _ = Describe("DockerConfigWatcher", func() {
 		tmpfile := filepath.Join(GinkgoT().TempDir(), "dockerconfig.json")
 		Expect(os.WriteFile(tmpfile, []byte(`{"auths":{}}`), 0o600)).To(Succeed())
 
-		cfg, err := config.NewConfig(
-			config.WithDockerConfigJSONPath(tmpfile),
-			config.WithSecretNamespace(watcherTestSecretNs),
-		)
+		cfg, err := config.New(config.Config{
+			DockerConfigJSONPath: tmpfile,
+			SecretNamespace:      watcherTestSecretNs,
+		})
 		Expect(err).NotTo(HaveOccurred())
 
 		events := make(chan event.GenericEvent, watcherEventBuffer)
