@@ -45,10 +45,10 @@ const (
 
 var _ = Describe("Secret Controller", func() {
 	ctx := context.Background()
-	cfg, err := config.NewConfig(
-		config.WithDockerConfigJSON(imagePullSecretData),
-		config.WithSecretNamespace(kubeSystemNs),
-	)
+	cfg, err := config.New(config.Config{
+		DockerConfigJSON: imagePullSecretData,
+		SecretNamespace:  kubeSystemNs,
+	})
 	if err != nil {
 		panic(err)
 	}
@@ -65,7 +65,7 @@ var _ = Describe("Secret Controller", func() {
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 				&corev1.Namespace{Name: secretNsManaged},
 			).Build()
-			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg}
+			reconciler := &SecretReconciler{Client: c, Config: cfg}
 
 			result, err := reconciler.Reconcile(ctx, reconcile.Request{
 				Name: cfg.SecretName, Namespace: secretNsManaged,
@@ -85,7 +85,7 @@ var _ = Describe("Secret Controller", func() {
 					Name:        secretNsExcluded,
 					Annotations: map[string]string{cfg.ExcludeAnnotation: annotationTrue}},
 			).Build()
-			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg}
+			reconciler := &SecretReconciler{Client: c, Config: cfg}
 
 			result, err := reconciler.Reconcile(ctx, reconcile.Request{
 				Name: cfg.SecretName, Namespace: secretNsExcluded,
@@ -100,7 +100,7 @@ var _ = Describe("Secret Controller", func() {
 		It("should return cleanly when the namespace no longer exists", func() {
 			scheme := newTestScheme()
 			c := fake.NewClientBuilder().WithScheme(scheme).Build()
-			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg}
+			reconciler := &SecretReconciler{Client: c, Config: cfg}
 
 			result, err := reconciler.Reconcile(ctx, reconcile.Request{
 				Name: cfg.SecretName, Namespace: "secretns-gone",
@@ -125,7 +125,7 @@ var _ = Describe("Secret Controller", func() {
 				Namespace: foreignSecret.GetNamespace(),
 			}
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(namespace, foreignSecret).Build()
-			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg}
+			reconciler := &SecretReconciler{Client: c, Config: cfg}
 
 			By("Snapshotting the foreign secret before reconciliation")
 			before := &corev1.Secret{}
@@ -170,7 +170,7 @@ var _ = Describe("Secret Controller", func() {
 				&corev1.Namespace{Name: secretNsManaged},
 			).Build()
 			rec := record.NewFakeRecorder(10)
-			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg, Recorder: rec}
+			reconciler := &SecretReconciler{Client: c, Config: cfg, Recorder: rec}
 
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
 				Name: cfg.SecretName, Namespace: secretNsManaged,
@@ -197,7 +197,7 @@ var _ = Describe("Secret Controller", func() {
 				staleSecret,
 			).Build()
 			rec := record.NewFakeRecorder(10)
-			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg, Recorder: rec}
+			reconciler := &SecretReconciler{Client: c, Config: cfg, Recorder: rec}
 
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
 				Name: cfg.SecretName, Namespace: secretNsManaged,
@@ -222,7 +222,7 @@ var _ = Describe("Secret Controller", func() {
 				upToDate,
 			).Build()
 			rec := record.NewFakeRecorder(10)
-			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg, Recorder: rec}
+			reconciler := &SecretReconciler{Client: c, Config: cfg, Recorder: rec}
 
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
 				Name: cfg.SecretName, Namespace: secretNsManaged,
@@ -247,7 +247,7 @@ var _ = Describe("Secret Controller", func() {
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
 				&corev1.Namespace{Name: "predns-managed"},
 			).Build()
-			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg}
+			reconciler := &SecretReconciler{Client: c, Config: cfg}
 
 			pred := reconciler.managedPredicate()
 
@@ -263,7 +263,7 @@ var _ = Describe("Secret Controller", func() {
 					Name:        "predns-excluded",
 					Annotations: map[string]string{cfg.ExcludeAnnotation: annotationTrue}},
 			).Build()
-			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg}
+			reconciler := &SecretReconciler{Client: c, Config: cfg}
 
 			pred := reconciler.managedPredicate()
 
@@ -273,7 +273,7 @@ var _ = Describe("Secret Controller", func() {
 		It("should fail open when the namespace lookup fails", func() {
 			scheme := newTestScheme()
 			c := fake.NewClientBuilder().WithScheme(scheme).Build()
-			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg}
+			reconciler := &SecretReconciler{Client: c, Config: cfg}
 
 			pred := reconciler.managedPredicate()
 
@@ -290,7 +290,7 @@ var _ = Describe("Secret Controller", func() {
 					DeletionTimestamp: &now,
 					Finalizers:        []string{"kubernetes"}},
 			).Build()
-			reconciler := &SecretReconciler{Client: c, Scheme: scheme, Config: cfg}
+			reconciler := &SecretReconciler{Client: c, Config: cfg}
 
 			pred := reconciler.managedPredicate()
 

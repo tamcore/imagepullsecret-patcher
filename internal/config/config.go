@@ -19,11 +19,11 @@ limitations under the License.
 package config
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
-
-	env "github.com/caitlinelfring/go-env-default"
-	"github.com/tamcore/imagepullsecret-patcher/internal/namespace"
+	"os"
+	"strconv"
 )
 
 const (
@@ -31,6 +31,15 @@ const (
 	AnnotationAppName   = "imagepullsecret-patcher"
 	// LabelManagedBy is used for cache selector filtering to reduce API server load
 	LabelManagedBy = "app.kubernetes.io/managed-by"
+)
+
+// Defaults applied to fields the caller leaves empty.
+const (
+	DefaultSecretName              = "global-imagepullsecret"
+	DefaultExcludedNamespaces      = "kube-*"
+	DefaultExcludeAnnotation       = "pborn.eu/imagepullsecret-patcher-exclude"
+	DefaultServiceAccounts         = "default"
+	DefaultMaxConcurrentReconciles = 1
 )
 
 type Config struct {
@@ -44,83 +53,59 @@ type Config struct {
 	FeatureDeletePods                bool
 	FeatureWatchDockerConfigJSONPath bool
 	MaxConcurrentReconciles          int
-	AnnotationManagedBy              string
-	AnnotationAppName                string
 }
 
-// ConfigOption is a functional option for Config.
-type ConfigOption func(*Config)
-
-func WithDockerConfigJSON(val string) ConfigOption {
-	return func(c *Config) { c.DockerConfigJSON = val }
-}
-func WithDockerConfigJSONPath(val string) ConfigOption {
-	return func(c *Config) { c.DockerConfigJSONPath = val }
-}
-func WithSecretName(val string) ConfigOption {
-	return func(c *Config) { c.SecretName = val }
-}
-func WithSecretNamespace(val string) ConfigOption {
-	return func(c *Config) { c.SecretNamespace = val }
-}
-func WithExcludedNamespaces(val string) ConfigOption {
-	return func(c *Config) { c.ExcludedNamespaces = val }
-}
-func WithExcludeAnnotation(val string) ConfigOption {
-	return func(c *Config) { c.ExcludeAnnotation = val }
-}
-func WithServiceAccounts(val string) ConfigOption {
-	return func(c *Config) { c.ServiceAccounts = val }
-}
-func WithFeatureDeletePods(val bool) ConfigOption {
-	return func(c *Config) { c.FeatureDeletePods = val }
-}
-func WithFeatureWatchDockerConfigJSONPath(val bool) ConfigOption {
-	return func(c *Config) { c.FeatureWatchDockerConfigJSONPath = val }
-}
-func WithMaxConcurrentReconciles(val int) ConfigOption {
-	return func(c *Config) { c.MaxConcurrentReconciles = val }
-}
-
-// NewConfig constructs a Config from environment defaults and functional options.
-// It returns an error instead of panicking for easier testing and caller handling.
-func NewConfig(opts ...ConfigOption) (*Config, error) {
-	c := &Config{
-		DockerConfigJSON:                 env.GetDefault("CONFIG_DOCKERCONFIGJSON", ""),
-		DockerConfigJSONPath:             env.GetDefault("CONFIG_DOCKERCONFIGJSONPATH", ""),
-		SecretName:                       env.GetDefault("CONFIG_SECRETNAME", "global-imagepullsecret"),
-		SecretNamespace:                  env.GetDefault("CONFIG_SECRET_NAMESPACE", ""),
-		ExcludedNamespaces:               env.GetDefault("CONFIG_EXCLUDED_NAMESPACES", "kube-*"),
-		ExcludeAnnotation:                env.GetDefault("CONFIG_EXCLUDE_ANNOTATION", "pborn.eu/imagepullsecret-patcher-exclude"),
-		ServiceAccounts:                  env.GetDefault("CONFIG_SERVICEACCOUNTS", "default"),
-		AnnotationManagedBy:              AnnotationManagedBy,
-		AnnotationAppName:                AnnotationAppName,
-		FeatureDeletePods:                env.GetBoolDefault("CONFIG_DELETE_PODS", false),
-		FeatureWatchDockerConfigJSONPath: env.GetBoolDefault("CONFIG_WATCH_DOCKERCONFIGJSONPATH", false),
-		MaxConcurrentReconciles:          env.GetIntDefault("CONFIG_MAX_CONCURRENT_RECONCILES", 1),
+// FromEnv returns the configuration read from the CONFIG_* environment
+// variables, falling back to the defaults above. Callers use it to seed
+// command-line flag defaults, so a flag always overrides the environment.
+func FromEnv() Config {
+	maxConcurrentReconciles, err := strconv.Atoi(os.Getenv("CONFIG_MAX_CONCURRENT_RECONCILES"))
+	if err != nil {
+		maxConcurrentReconciles = DefaultMaxConcurrentReconciles
 	}
+	deletePods, _ := strconv.ParseBool(os.Getenv("CONFIG_DELETE_PODS"))
+	watchDockerConfigJSONPath, _ := strconv.ParseBool(os.Getenv("CONFIG_WATCH_DOCKERCONFIGJSONPATH"))
 
-	for _, opt := range opts {
-		opt(c)
+	return Config{
+		DockerConfigJSON:                 os.Getenv("CONFIG_DOCKERCONFIGJSON"),
+		DockerConfigJSONPath:             os.Getenv("CONFIG_DOCKERCONFIGJSONPATH"),
+		SecretName:                       cmp.Or(os.Getenv("CONFIG_SECRETNAME"), DefaultSecretName),
+		SecretNamespace:                  os.Getenv("CONFIG_SECRET_NAMESPACE"),
+		ExcludedNamespaces:               cmp.Or(os.Getenv("CONFIG_EXCLUDED_NAMESPACES"), DefaultExcludedNamespaces),
+		ExcludeAnnotation:                cmp.Or(os.Getenv("CONFIG_EXCLUDE_ANNOTATION"), DefaultExcludeAnnotation),
+		ServiceAccounts:                  cmp.Or(os.Getenv("CONFIG_SERVICEACCOUNTS"), DefaultServiceAccounts),
+		FeatureDeletePods:                deletePods,
+		FeatureWatchDockerConfigJSONPath: watchDockerConfigJSONPath,
+		MaxConcurrentReconciles:          maxConcurrentReconciles,
 	}
+}
+
+// New validates c, fills empty fields with their defaults and detects the
+// operator namespace when SecretNamespace is unset. Error messages never
+// include credential values.
+func New(c Config) (*Config, error) {
+	c.SecretName = cmp.Or(c.SecretName, DefaultSecretName)
+	c.ExcludedNamespaces = cmp.Or(c.ExcludedNamespaces, DefaultExcludedNamespaces)
+	c.ExcludeAnnotation = cmp.Or(c.ExcludeAnnotation, DefaultExcludeAnnotation)
+	c.ServiceAccounts = cmp.Or(c.ServiceAccounts, DefaultServiceAccounts)
+	c.MaxConcurrentReconciles = cmp.Or(c.MaxConcurrentReconciles, DefaultMaxConcurrentReconciles)
 
 	if c.SecretNamespace == "" {
-		operatorNamespace, err := namespace.GetOperatorNamespace()
+		operatorNamespace, err := operatorNamespace()
 		if err != nil {
 			return nil, fmt.Errorf("failed to detect operator namespace: %w", err)
 		}
 		c.SecretNamespace = operatorNamespace
 	}
 
-	if c.DockerConfigJSON == "" && c.DockerConfigJSONPath == "" {
+	switch {
+	case c.DockerConfigJSON == "" && c.DockerConfigJSONPath == "":
 		return nil, fmt.Errorf("neither CONFIG_DOCKERCONFIGJSON nor CONFIG_DOCKERCONFIGJSONPATH defined")
-	}
-	if c.DockerConfigJSON != "" && c.DockerConfigJSONPath != "" {
+	case c.DockerConfigJSON != "" && c.DockerConfigJSONPath != "":
 		return nil, fmt.Errorf("cannot specify both CONFIG_DOCKERCONFIGJSON and CONFIG_DOCKERCONFIGJSONPATH")
-	}
-	if c.DockerConfigJSON != "" && !json.Valid([]byte(c.DockerConfigJSON)) {
+	case c.DockerConfigJSON != "" && !json.Valid([]byte(c.DockerConfigJSON)):
 		return nil, fmt.Errorf("CONFIG_DOCKERCONFIGJSON does not contain valid JSON")
 	}
 
-	return c, nil
+	return &c, nil
 }

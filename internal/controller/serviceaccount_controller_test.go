@@ -86,11 +86,11 @@ var _ = Describe("ServiceAccount Controller", func() {
 	Context("When reconciling a ServiceAccount", func() {
 		var err error
 		ctx := context.Background()
-		cfg, err := config.NewConfig(
-			config.WithDockerConfigJSON(imagePullSecretData),
-			config.WithSecretNamespace(kubeSystemNs),
-			config.WithFeatureDeletePods(true),
-		)
+		cfg, err := config.New(config.Config{
+			DockerConfigJSON:  imagePullSecretData,
+			SecretNamespace:   kubeSystemNs,
+			FeatureDeletePods: true,
+		})
 		if err != nil {
 			panic(err)
 		}
@@ -161,7 +161,6 @@ var _ = Describe("ServiceAccount Controller", func() {
 			By("Reconciling the ServiceAccount")
 			serviceAccountReconciler := &ServiceAccountReconciler{
 				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
 				Config: cfg,
 			}
 			_, err = serviceAccountReconciler.Reconcile(ctx, reconcile.Request{
@@ -227,7 +226,6 @@ var _ = Describe("ServiceAccount Controller", func() {
 			rec := record.NewFakeRecorder(10)
 			serviceAccountReconciler := &ServiceAccountReconciler{
 				Client:   k8sClient,
-				Scheme:   k8sClient.Scheme(),
 				Config:   cfg,
 				Recorder: rec,
 			}
@@ -254,7 +252,6 @@ var _ = Describe("ServiceAccount Controller", func() {
 			By("Reconciling a ServiceAccount that was never created")
 			serviceAccountReconciler := &ServiceAccountReconciler{
 				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
 				Config: cfg,
 			}
 			result, err := serviceAccountReconciler.Reconcile(ctx, reconcile.Request{
@@ -286,7 +283,6 @@ var _ = Describe("ServiceAccount Controller", func() {
 			By("Reconciling the ServiceAccount")
 			serviceAccountReconciler := &ServiceAccountReconciler{
 				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
 				Config: cfg,
 			}
 			_, err = serviceAccountReconciler.Reconcile(ctx, reconcile.Request{
@@ -309,10 +305,10 @@ var _ = Describe("ServiceAccount Controller", func() {
 	// causing Create to fail with AlreadyExists.
 	Context("When upgrading from a version without the managed-by label", func() {
 		ctx := context.Background()
-		cfg, err := config.NewConfig(
-			config.WithDockerConfigJSON(imagePullSecretData),
-			config.WithSecretNamespace(kubeSystemNs),
-		)
+		cfg, err := config.New(config.Config{
+			DockerConfigJSON: imagePullSecretData,
+			SecretNamespace:  kubeSystemNs,
+		})
 		if err != nil {
 			panic(err)
 		}
@@ -355,7 +351,6 @@ var _ = Describe("ServiceAccount Controller", func() {
 			reconciler := &ServiceAccountReconciler{
 				Client:    labelFilteredClient,
 				APIReader: rawClient,
-				Scheme:    testScheme,
 				Config:    cfg,
 			}
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
@@ -387,10 +382,10 @@ var _ = Describe("ServiceAccount Controller", func() {
 
 	Context("When the namespace is not yet visible in the cache", func() {
 		ctx := context.Background()
-		cfg, err := config.NewConfig(
-			config.WithDockerConfigJSON(imagePullSecretData),
-			config.WithSecretNamespace(kubeSystemNs),
-		)
+		cfg, err := config.New(config.Config{
+			DockerConfigJSON: imagePullSecretData,
+			SecretNamespace:  kubeSystemNs,
+		})
 		if err != nil {
 			panic(err)
 		}
@@ -406,7 +401,7 @@ var _ = Describe("ServiceAccount Controller", func() {
 				Name: saDefault, Namespace: "ns-not-in-cache",
 			}
 			c := newFakeClient(serviceAccount)
-			reconciler := &ServiceAccountReconciler{Client: c, Scheme: c.Scheme(), Config: cfg}
+			reconciler := &ServiceAccountReconciler{Client: c, Config: cfg}
 
 			result, err := reconciler.Reconcile(ctx, reconcile.Request{
 				Name: saDefault, Namespace: "ns-not-in-cache",
@@ -423,7 +418,7 @@ var _ = Describe("ServiceAccount Controller", func() {
 					Name:        "sa-predns-excluded",
 					Annotations: map[string]string{cfg.ExcludeAnnotation: annotationTrue}},
 			)
-			reconciler := &ServiceAccountReconciler{Client: c, Scheme: c.Scheme(), Config: cfg}
+			reconciler := &ServiceAccountReconciler{Client: c, Config: cfg}
 			pred := reconciler.managedPredicate()
 
 			saIn := func(namespace string) *corev1.ServiceAccount {
@@ -452,10 +447,10 @@ var _ = Describe("ServiceAccount Controller", func() {
 	// imagePullSecret, so it has to be deleted and recreated.
 	Context("When adopting a pre-existing secret with an incompatible type", func() {
 		ctx := context.Background()
-		cfg, err := config.NewConfig(
-			config.WithDockerConfigJSON(imagePullSecretData),
-			config.WithSecretNamespace(kubeSystemNs),
-		)
+		cfg, err := config.New(config.Config{
+			DockerConfigJSON: imagePullSecretData,
+			SecretNamespace:  kubeSystemNs,
+		})
 		if err != nil {
 			panic(err)
 		}
@@ -491,7 +486,6 @@ var _ = Describe("ServiceAccount Controller", func() {
 			reconciler := &ServiceAccountReconciler{
 				Client:    labelFilteredClient,
 				APIReader: rawClient,
-				Scheme:    testScheme,
 				Config:    cfg,
 			}
 			_, err := reconciler.Reconcile(ctx, reconcile.Request{
@@ -521,10 +515,10 @@ var _ = Describe("ServiceAccount Controller", func() {
 
 	Context("When a namespace exclusion changes", func() {
 		ctx := context.Background()
-		cfg, err := config.NewConfig(
-			config.WithDockerConfigJSON(imagePullSecretData),
-			config.WithSecretNamespace(kubeSystemNs),
-		)
+		cfg, err := config.New(config.Config{
+			DockerConfigJSON: imagePullSecretData,
+			SecretNamespace:  kubeSystemNs,
+		})
 		if err != nil {
 			panic(err)
 		}
@@ -557,7 +551,7 @@ var _ = Describe("ServiceAccount Controller", func() {
 			It("returns exactly one request for the default ServiceAccount in a managed namespace", func() {
 				nsName := "mapns-managed"
 				c := newFakeClient()
-				reconciler := &ServiceAccountReconciler{Client: c, Scheme: c.Scheme(), Config: cfg}
+				reconciler := &ServiceAccountReconciler{Client: c, Config: cfg}
 
 				requests := reconciler.namespaceToServiceAccounts(ctx, namespaceNamed(nsName, nil))
 
@@ -566,7 +560,7 @@ var _ = Describe("ServiceAccount Controller", func() {
 
 			It("returns no requests for an excluded namespace", func() {
 				c := newFakeClient()
-				reconciler := &ServiceAccountReconciler{Client: c, Scheme: c.Scheme(), Config: cfg}
+				reconciler := &ServiceAccountReconciler{Client: c, Config: cfg}
 				excludedNs := namespaceNamed("mapns-excluded", map[string]string{
 					cfg.ExcludeAnnotation: annotationTrue,
 				})
@@ -576,11 +570,11 @@ var _ = Describe("ServiceAccount Controller", func() {
 
 			It("expands glob entries to matching ServiceAccounts and de-duplicates requests", func() {
 				nsName := "mapns-glob"
-				globCfg, err := config.NewConfig(
-					config.WithDockerConfigJSON(imagePullSecretData),
-					config.WithSecretNamespace(kubeSystemNs),
-					config.WithServiceAccounts("build*,default"),
-				)
+				globCfg, err := config.New(config.Config{
+					DockerConfigJSON: imagePullSecretData,
+					SecretNamespace:  kubeSystemNs,
+					ServiceAccounts:  "build*,default",
+				})
 				Expect(err).NotTo(HaveOccurred())
 
 				c := newFakeClient(
@@ -588,7 +582,7 @@ var _ = Describe("ServiceAccount Controller", func() {
 					serviceAccountIn(nsName, "build-b"),
 					serviceAccountIn(nsName, "other"),
 				)
-				reconciler := &ServiceAccountReconciler{Client: c, Scheme: c.Scheme(), Config: globCfg}
+				reconciler := &ServiceAccountReconciler{Client: c, Config: globCfg}
 
 				requests := reconciler.namespaceToServiceAccounts(ctx, namespaceNamed(nsName, nil))
 
@@ -630,7 +624,7 @@ var _ = Describe("ServiceAccount Controller", func() {
 				cfg.ExcludeAnnotation: annotationTrue,
 			})
 			c := newFakeClient(excludedNs, serviceAccountIn(nsName, saDefault))
-			reconciler := &ServiceAccountReconciler{Client: c, Scheme: c.Scheme(), Config: cfg}
+			reconciler := &ServiceAccountReconciler{Client: c, Config: cfg}
 
 			By("producing no requests while the namespace is still excluded")
 			Expect(reconciler.namespaceToServiceAccounts(ctx, excludedNs)).To(BeEmpty())

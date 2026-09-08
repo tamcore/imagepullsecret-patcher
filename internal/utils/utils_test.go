@@ -124,11 +124,11 @@ func Test_IsServiceAccountManaged(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			cfg, err := config.NewConfig(
-				config.WithDockerConfigJSON(`{"auths":{}}`),
-				config.WithSecretNamespace("kube-system"),
-				config.WithServiceAccounts(tt.configServiceAccounts),
-			)
+			cfg, err := config.New(config.Config{
+				DockerConfigJSON: emptyAuthsJSON,
+				SecretNamespace:  secretNamespaceTest,
+				ServiceAccounts:  tt.configServiceAccounts,
+			})
 			if err != nil {
 				t.Fatalf("failed to create config: %v", err)
 			}
@@ -142,10 +142,10 @@ func Test_IsServiceAccountManaged(t *testing.T) {
 }
 
 func Test_IsManagedSecret(t *testing.T) {
-	cfg, err := config.NewConfig(
-		config.WithDockerConfigJSON(`{"auths":{}}`),
-		config.WithSecretNamespace("kube-system"),
-	)
+	cfg, err := config.New(config.Config{
+		DockerConfigJSON: emptyAuthsJSON,
+		SecretNamespace:  secretNamespaceTest,
+	})
 	if err != nil {
 		t.Fatalf("failed to create config: %v", err)
 	}
@@ -250,10 +250,10 @@ func Test_HasAnnotation(t *testing.T) {
 
 func newCleanupTestConfig(t *testing.T) *config.Config {
 	t.Helper()
-	cfg, err := config.NewConfig(
-		config.WithDockerConfigJSON(`{"auths":{}}`),
-		config.WithSecretNamespace("kube-system"),
-	)
+	cfg, err := config.New(config.Config{
+		DockerConfigJSON: emptyAuthsJSON,
+		SecretNamespace:  secretNamespaceTest,
+	})
 	if err != nil {
 		t.Fatalf("failed to create config: %v", err)
 	}
@@ -473,46 +473,46 @@ func Test_GetDockerConfigJSON(t *testing.T) {
 
 	tests := []struct {
 		name    string
-		setup   func(t *testing.T) []config.ConfigOption
+		setup   func(t *testing.T) config.Config
 		want    string
 		wantErr bool
 	}{
 		{
 			"valid inline JSON is returned as-is",
-			func(t *testing.T) []config.ConfigOption {
-				return []config.ConfigOption{config.WithDockerConfigJSON(validJSON)}
+			func(t *testing.T) config.Config {
+				return config.Config{DockerConfigJSON: validJSON}
 			},
 			validJSON,
 			false,
 		},
 		{
 			"valid JSON from file is returned as-is",
-			func(t *testing.T) []config.ConfigOption {
-				return []config.ConfigOption{config.WithDockerConfigJSONPath(writeTempFile(t, validJSON))}
+			func(t *testing.T) config.Config {
+				return config.Config{DockerConfigJSONPath: writeTempFile(t, validJSON)}
 			},
 			validJSON,
 			false,
 		},
 		{
 			"invalid JSON from file errors without leaking content",
-			func(t *testing.T) []config.ConfigOption {
-				return []config.ConfigOption{config.WithDockerConfigJSONPath(writeTempFile(t, invalidJSON))}
+			func(t *testing.T) config.Config {
+				return config.Config{DockerConfigJSONPath: writeTempFile(t, invalidJSON)}
 			},
 			"",
 			true,
 		},
 		{
 			"empty file errors",
-			func(t *testing.T) []config.ConfigOption {
-				return []config.ConfigOption{config.WithDockerConfigJSONPath(writeTempFile(t, ""))}
+			func(t *testing.T) config.Config {
+				return config.Config{DockerConfigJSONPath: writeTempFile(t, "")}
 			},
 			"",
 			true,
 		},
 		{
 			"missing file errors",
-			func(t *testing.T) []config.ConfigOption {
-				return []config.ConfigOption{config.WithDockerConfigJSONPath(filepath.Join(t.TempDir(), "nonexistent.json"))}
+			func(t *testing.T) config.Config {
+				return config.Config{DockerConfigJSONPath: filepath.Join(t.TempDir(), "nonexistent.json")}
 			},
 			"",
 			true,
@@ -521,13 +521,11 @@ func Test_GetDockerConfigJSON(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Arrange
-			cfg := &config.Config{SecretNamespace: "kube-system"}
-			for _, opt := range tt.setup(t) {
-				opt(cfg)
-			}
+			cfg := tt.setup(t)
+			cfg.SecretNamespace = secretNamespaceTest
 
 			// Act
-			got, err := GetDockerConfigJSON(cfg)
+			got, err := GetDockerConfigJSON(&cfg)
 
 			// Assert
 			if (err != nil) != tt.wantErr {
@@ -547,6 +545,7 @@ func Test_GetDockerConfigJSON(t *testing.T) {
 // NOTE: keep these at the end of the file to minimize merge conflicts.
 
 const (
+	emptyAuthsJSON         = `{"auths":{}}`
 	secretNamespaceTest    = "kube-system"
 	reconcileDockerCfgJSON = `{"auths":{"reconcile.example.com":{"auth":"dGVzdDp0ZXN0"}}}`
 	foreignAnnotationKey   = "cert-manager.io/foo"
@@ -555,10 +554,10 @@ const (
 
 func newReconcileTestConfig(t *testing.T) *config.Config {
 	t.Helper()
-	cfg, err := config.NewConfig(
-		config.WithDockerConfigJSON(reconcileDockerCfgJSON),
-		config.WithSecretNamespace(secretNamespaceTest),
-	)
+	cfg, err := config.New(config.Config{
+		DockerConfigJSON: reconcileDockerCfgJSON,
+		SecretNamespace:  secretNamespaceTest,
+	})
 	if err != nil {
 		t.Fatalf("failed to create config: %v", err)
 	}
@@ -935,7 +934,7 @@ func Test_ReconcileImagePullSecret_WrapsGetError(t *testing.T) {
 		Build()
 	cfg := &config.Config{
 		SecretName:       "image-pull-secret",
-		DockerConfigJSON: `{"auths":{}}`,
+		DockerConfigJSON: emptyAuthsJSON,
 	}
 
 	// Act
