@@ -5,7 +5,7 @@ go 1.27.1
 require (
 	github.com/KimMachineGun/automemlimit v1.0.0
 	github.com/onsi/ginkgo/v2 v2.32.2
-	github.com/onsi/gomega v1.43.0
+	github.com/onsi/gomega v1.43.1
 	go.uber.org/automaxprocs v1.6.0
 	k8s.io/api v0.37.0
 	k8s.io/apimachinery v0.37.0
@@ -59,7 +59,7 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.27.1 // indirect
 	go.yaml.in/yaml/v2 v2.4.4 // indirect
-	go.yaml.in/yaml/v3 v3.0.4 // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/mod v0.37.0 // indirect
 	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
