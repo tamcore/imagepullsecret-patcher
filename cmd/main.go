@@ -54,6 +54,7 @@ func main() {
 	var metricsAddr string
 	var enableLeaderElection bool
 	var probeAddr string
+	var pprofAddr string
 	var secureMetrics bool
 	var noAutoMaxProcs bool
 	var noAutoMemlimit bool
@@ -67,6 +68,8 @@ func main() {
 		"The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081",
 		"The address the probe endpoint binds to.")
+	flag.StringVar(&pprofAddr, "pprof-bind-address", "",
+		"The address the pprof endpoint binds to. Empty disables it.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", true,
 		"Enable leader election for controller manager. "+
 			"Enabling this will ensure there is only one active controller manager.")
@@ -144,6 +147,7 @@ func main() {
 			SecureServing: secureMetrics,
 		},
 		HealthProbeBindAddress:        probeAddr,
+		PprofBindAddress:              pprofAddr,
 		LeaderElection:                enableLeaderElection,
 		LeaderElectionID:              "tamcore.github.com-imagepullsecret-patcher",
 		LeaderElectionReleaseOnCancel: true,
