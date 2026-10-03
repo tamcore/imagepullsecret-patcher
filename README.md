@@ -43,6 +43,8 @@ Available configuration options are
 
 A command flag always overrides the matching environment variable.
 
+To profile the controller, set `-pprof-bind-address` (for example `:8082`). The pprof endpoint is disabled by default. It exposes heap contents, so do not make it reachable from outside the cluster.
+
 And here are the annotations available:
 
 | Annotation                                        | Object    | Description                                                                                                       |
