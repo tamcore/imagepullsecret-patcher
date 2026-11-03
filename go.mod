@@ -4,7 +4,7 @@ go 1.27.3
 
 require (
 	github.com/KimMachineGun/automemlimit v1.0.1
-	github.com/onsi/ginkgo/v2 v2.33.1
+	github.com/onsi/ginkgo/v2 v2.34.0
 	github.com/onsi/gomega v1.44.0
 	go.uber.org/automaxprocs v1.6.0
 	k8s.io/api v0.37.2
