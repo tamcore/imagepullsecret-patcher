@@ -94,7 +94,7 @@ jobs:
         k8s_version: ${{ fromJson(needs.get-k8s-versions.outputs.versions) }}
 
     steps:
-    - uses: azure/setup-kubectl@829323503d1be3d00ca8346e5391ca0b07a9ab0d # v5
+    - uses: azure/setup-kubectl@bda439f5f36b99b262ebdcd3613869bddb064c8e # v5
 
     - name: Checkout code
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -134,7 +134,7 @@ jobs:
         mkdir -p /tmp/logs
         kind export logs --name kind-cluster-${{ matrix.k8s_version }} /tmp/logs
 
-    - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+    - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
       if: failure()
       with:
         name: kind_v${{ matrix.k8s_version }}
