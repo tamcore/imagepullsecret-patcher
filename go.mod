@@ -3,7 +3,7 @@ module github.com/tamcore/imagepullsecret-patcher
 go 1.27.4
 
 require (
-	github.com/KimMachineGun/automemlimit v1.0.1
+	github.com/KimMachineGun/automemlimit v1.0.2
 	github.com/onsi/ginkgo/v2 v2.34.0
 	github.com/onsi/gomega v1.44.0
 	go.uber.org/automaxprocs v1.6.0
